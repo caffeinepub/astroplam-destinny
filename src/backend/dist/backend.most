@@ -1,0 +1,137 @@
+// Version: 1.0.0
+type BlogPost__543622485 =
+  {
+    author : Text;
+    content : Text;
+    createdAt : Timestamp__672038077;
+    id : Text;
+    published : Bool;
+    title : Text
+  };
+type Data__791452850<K, V> =
+  {var count : Nat__490723111; kvs : [var ?(K, V)]};
+type ExternalBlob__246066408 = Blob;
+type Inquiry__931573009 =
+  {
+    authorId : ?Principal;
+    birthCountry : ?Text;
+    city : ?Text;
+    dob : ?Text;
+    handPicture : ?ExternalBlob__246066408;
+    id : Text;
+    palmPhotos : [?ExternalBlob__246066408];
+    pastLifeNotes : Text;
+    question : Text;
+    relationshipPerson2 : ?Person__663086282;
+    seedNumber : ?Nat;
+    serviceId : Nat;
+    state : ?Text;
+    submittedAt : Timestamp__672038077;
+    tob : ?Text;
+    visitorName : Text
+  };
+type Int__270357528 = Int__616954475;
+type Int__616954475 = Int;
+type Internal__8484328<K, V> =
+  {children : [var ?Node__46230540<K, V>]; data : Data__791452850<K, V>};
+type Leaf__809889148<K, V> = {data : Data__791452850<K, V>};
+type Map__158565046<K, V> = Map__297112838<K, V>;
+type Map__297112838<K, V> =
+  {var root : Node__46230540<K, V>; var size : Nat__490723111};
+type Map__605269027<K, V> = Map__158565046<K, V>;
+type Nat__490723111 = Nat__920180692;
+type Nat__920180692 = Nat;
+type Node__46230540<K, V> =
+  {#internal : Internal__8484328<K, V>; #leaf : Leaf__809889148<K, V>};
+type Notice__526928315 =
+  {
+    active : Bool;
+    createdAt : Timestamp__672038077;
+    id : Text;
+    message : Text;
+    title : Text
+  };
+type NumerologyUser__932440451 =
+  {passwordHash : Text; sectionLevel : Nat; username : Text};
+type Person__663086282 = {dob : ?Text; name : Text; tob : ?Text};
+type Time__796480547 = Int__270357528;
+type Time__900049286 = Time__796480547;
+type Timestamp__672038077 = Time__900049286;
+type UserProfile__491224006 =
+  {
+    createdAt : Timestamp__672038077;
+    email : Text;
+    id : Principal;
+    name : Text
+  };
+type UserRole__1054455867 = {#admin; #guest; #user};
+type VisitorID__480632159 =
+  {
+    createdAt : Timestamp__672038077;
+    expiresAt : Timestamp__672038077;
+    password : Text;
+    service : Text;
+    username : Text;
+    visitorName : Text
+  };
+type VisitorQuery__471881202 =
+  {
+    contactInfo : Text;
+    message : Text;
+    name : Text;
+    submittedAt : Timestamp__672038077
+  };
+actor {
+  stable ADMIN_PASS : Text;
+  stable ADMIN_USER : Text;
+  stable NANOS_PER_DAY : Int;
+  stable VISITOR_ADMIN_EMAIL : Text;
+  stable VISITOR_ADMIN_PASS : Text;
+  stable accessControlState :
+    {
+      var adminAssigned : Bool;
+      userRoles : Map__605269027<Principal, UserRole__1054455867>
+    };
+  stable blogPosts :
+    {
+      var root : Node__46230540<Text, BlogPost__543622485>;
+      var size : Nat__490723111
+    };
+  stable inquiries :
+    {
+      var root : Node__46230540<Text, Inquiry__931573009>;
+      var size : Nat__490723111
+    };
+  stable var nextBlogPostId : Nat;
+  stable var nextInquiryId : Nat;
+  stable var nextNoticeId : Nat;
+  stable var nextVisitorQueryId : Nat;
+  stable notices :
+    {
+      var root : Node__46230540<Text, Notice__526928315>;
+      var size : Nat__490723111
+    };
+  stable numerologyUsers :
+    {
+      var root : Node__46230540<Text, NumerologyUser__932440451>;
+      var size : Nat__490723111
+    };
+  stable predefinedServices : [{id : Nat; name : Text; price : Nat}];
+  stable serviceAccess :
+    {var root : Node__46230540<Text, Bool>; var size : Nat__490723111};
+  stable userProfiles :
+    {
+      var root : Node__46230540<Principal, UserProfile__491224006>;
+      var size : Nat__490723111
+    };
+  stable visitorIDs :
+    {
+      var root : Node__46230540<Text, VisitorID__480632159>;
+      var size : Nat__490723111
+    };
+  stable visitorQueries :
+    {
+      var root : Node__46230540<Text, VisitorQuery__471881202>;
+      var size : Nat__490723111
+    }
+};

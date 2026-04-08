@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --radius: 0.625rem;
+    --background: 1 0 0;
+    --foreground: 0.145 0 0;
+    --card: 1 0 0;
+    --card-foreground: 0.145 0 0;
+    --popover: 1 0 0;
+    --popover-foreground: 0.145 0 0;
+    --primary: 0.205 0 0;
+    --primary-foreground: 0.985 0 0;
+    --secondary: 0.97 0 0;
+    --secondary-foreground: 0.205 0 0;
+    --muted: 0.97 0 0;
+    --muted-foreground: 0.556 0 0;
+    --accent: 0.97 0 0;
+    --accent-foreground: 0.205 0 0;
+    --destructive: 0.577 0.245 27.325;
+    --destructive-foreground: 0.985 0 0;
+    --border: 0.922 0 0;
+    --input: 0.922 0 0;
+    --ring: 0.708 0 0;
+    --chart-1: 0.646 0.222 41.116;
+    --chart-2: 0.6 0.118 184.704;
+    --chart-3: 0.398 0.07 227.392;
+    --chart-4: 0.828 0.189 84.429;
+    --chart-5: 0.769 0.188 70.08;
+    --sidebar: 0.985 0 0;
+    --sidebar-foreground: 0.145 0 0;
+    --sidebar-primary: 0.205 0 0;
+    --sidebar-primary-foreground: 0.985 0 0;
+    --sidebar-accent: 0.97 0 0;
+    --sidebar-accent-foreground: 0.205 0 0;
+    --sidebar-border: 0.922 0 0;
+    --sidebar-ring: 0.708 0 0;
+  }
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  .btn-gold {
+    @apply bg-gold text-charcoal font-semibold px-5 py-2.5 rounded-full transition-all duration-200 hover:bg-gold-dark hover:shadow-md active:scale-[0.98];
+  }
+  .btn-outline-gold {
+    @apply border border-gold/60 text-gold-dark font-semibold px-5 py-2.5 rounded-full transition-all duration-200 hover:bg-gold/10 hover:border-gold;
+  }
+  .btn-sage {
+    @apply bg-sage text-white font-semibold px-5 py-2.5 rounded-full transition-all duration-200 hover:bg-sage-dark hover:shadow-md;
+  }
+  .section-heading {
+    @apply font-serif text-3xl md:text-4xl font-bold text-charcoal;
+  }
+  .section-subheading {
+    @apply text-charcoal/60 text-base mt-2;
+  }
+  .celestial-divider {
+    @apply h-px bg-gradient-to-r from-transparent via-gold/50 to-transparent;
+  }
+  .card-hover {
+    @apply transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5;
+  }
+  .shadow-spiritual {
+    box-shadow: 0 4px 24px -4px oklch(0.72 0.1 75 / 0.15);
+  }
+  .shadow-gold {
+    box-shadow: 0 2px 16px -2px oklch(0.72 0.1 75 / 0.2);
+  }
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+  }
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}

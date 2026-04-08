@@ -1,0 +1,191 @@
+type _ImmutableObjectStorageRefillResult = 
+ record {
+   success: opt bool;
+   topped_up_amount: opt nat;
+ };
+type _ImmutableObjectStorageRefillInformation = record {
+                                                  proposed_top_up_amount:
+                                                   opt nat;};
+type _ImmutableObjectStorageCreateCertificateResult = 
+ record {
+   blob_hash: text;
+   method: text;
+ };
+type VisitorQuery = 
+ record {
+   contactInfo: text;
+   message: text;
+   name: text;
+   submittedAt: Timestamp;
+ };
+type VisitorID = 
+ record {
+   createdAt: Timestamp;
+   expiresAt: Timestamp;
+   password: text;
+   "service": text;
+   username: text;
+   visitorName: text;
+ };
+type UserRole = 
+ variant {
+   admin;
+   guest;
+   user;
+ };
+type UserProfile = 
+ record {
+   createdAt: Timestamp;
+   email: text;
+   id: principal;
+   name: text;
+ };
+type Timestamp = int;
+type Service = 
+ record {
+   id: nat;
+   name: text;
+   price: nat;
+ };
+type Person = 
+ record {
+   dob: opt text;
+   name: text;
+   tob: opt text;
+ };
+type NumerologyUser = 
+ record {
+   passwordHash: text;
+   sectionLevel: nat;
+   username: text;
+ };
+type Notice = 
+ record {
+   active: bool;
+   createdAt: Timestamp;
+   id: text;
+   message: text;
+   title: text;
+ };
+type Inquiry = 
+ record {
+   authorId: opt principal;
+   birthCountry: opt text;
+   city: opt text;
+   dob: opt text;
+   handPicture: opt ExternalBlob;
+   id: text;
+   palmPhotos: vec opt ExternalBlob;
+   pastLifeNotes: text;
+   question: text;
+   relationshipPerson2: opt Person;
+   seedNumber: opt nat;
+   serviceId: nat;
+   state: opt text;
+   submittedAt: Timestamp;
+   tob: opt text;
+   visitorName: text;
+ };
+type ExternalBlob = blob;
+type BlogPost = 
+ record {
+   author: text;
+   content: text;
+   createdAt: Timestamp;
+   id: text;
+   published: bool;
+   title: text;
+ };
+service : {
+  _immutableObjectStorageBlobsAreLive: (hashes: vec blob) -> (vec bool) query;
+  _immutableObjectStorageBlobsToDelete: () -> (vec blob) query;
+  _immutableObjectStorageConfirmBlobDeletion: (blobs: vec blob) -> ();
+  _immutableObjectStorageCreateCertificate: (blobHash: text) ->
+   (_ImmutableObjectStorageCreateCertificateResult);
+  _immutableObjectStorageRefillCashier: (refillInformation:
+   opt _ImmutableObjectStorageRefillInformation) ->
+   (_ImmutableObjectStorageRefillResult);
+  _immutableObjectStorageUpdateGatewayPrincipals: () -> ();
+  _initializeAccessControl: () -> ();
+  adminCreateNotice: (adminEmail: text, adminPassword: text, title: text,
+   message: text) -> (text);
+  adminCreatePost: (adminEmail: text, adminPassword: text, title: text,
+   content: text, author: text) -> (text);
+  adminCreateVisitorId: (adminEmail: text, adminPassword: text, "service":
+   text, visitorName: text, username: text, password: text, expiryDays:
+   nat) -> ();
+  adminDeleteNotice: (adminEmail: text, adminPassword: text, id: text) -> ();
+  adminDeletePost: (adminEmail: text, adminPassword: text, id: text) -> ();
+  adminDeleteVisitorId: (adminEmail: text, adminPassword: text, username:
+   text) -> ();
+  adminGetAllPosts: (adminEmail: text, adminPassword: text) ->
+   (vec BlogPost) query;
+  adminGetVisitorQueries: (adminEmail: text, adminPassword: text) ->
+   (vec VisitorQuery) query;
+  adminListNotices: (adminEmail: text, adminPassword: text) ->
+   (vec Notice) query;
+  adminListVisitorIds: (adminEmail: text, adminPassword: text) ->
+   (vec VisitorID) query;
+  adminPublishPost: (adminEmail: text, adminPassword: text, id: text) -> ();
+  adminToggleNotice: (adminEmail: text, adminPassword: text, id: text) -> ();
+  adminUpdatePost: (adminEmail: text, adminPassword: text, id: text, title:
+   text, content: text, author: text) -> ();
+  assignCallerUserRole: (user: principal, role: UserRole) -> ();
+  createPost: (title: text, content: text, author: text) -> (text);
+  deleteInquiry: (id: text) -> ();
+  deletePost: (id: text) -> ();
+  getAllInquiries: () -> (vec Inquiry) query;
+  getAllPosts: () -> (vec BlogPost) query;
+  getAllPostsAdmin: () -> (vec BlogPost) query;
+  getCallerUserProfile: () -> (opt UserProfile) query;
+  getCallerUserRole: () -> (UserRole) query;
+  getServices: () -> (vec Service) query;
+  getUserProfile: (user: principal) -> (opt UserProfile) query;
+  getVisitorQueries: () -> (vec VisitorQuery) query;
+  isCallerAdmin: () -> (bool) query;
+  noticeCreate: (adminEmail: text, adminPassword: text, title: text, message:
+   text) -> (text);
+  noticeDelete: (adminEmail: text, adminPassword: text, id: text) -> ();
+  noticeList: () -> (vec Notice) query;
+  noticeListAll: (adminEmail: text, adminPassword: text) ->
+   (vec Notice) query;
+  noticeToggleActive: (adminEmail: text, adminPassword: text, id: text) -> ();
+  numerologyCreateUser: (adminUsername: text, adminPassword: text, username:
+   text, password: text, sectionLevel: nat) -> ();
+  numerologyDeleteUser: (adminUsername: text, adminPassword: text, username:
+   text) -> ();
+  numerologyListUsers: (adminUsername: text, adminPassword: text) ->
+   (vec NumerologyUser) query;
+  numerologyLogin: (username: text, password: text) -> (nat);
+  openCreateVisitorId: ("service": text, visitorName: text, username: 
+   text, password: text, expiryDays: nat) -> ();
+  openDeleteVisitorId: (username: text) -> ();
+  openListVisitorIds: () -> (vec VisitorID) query;
+  publishPost: (id: text) -> ();
+  saveCallerUserProfile: (profile: UserProfile) -> ();
+  serviceGetAllAccess: (adminEmail: text, adminPassword: text) ->
+   (vec record {
+          text;
+          bool;
+        }) query;
+  serviceIsPublic: ("service": text) -> (bool) query;
+  serviceSetPublic: (adminEmail: text, adminPassword: text, "service": 
+   text, isPublic: bool) -> ();
+  submitInquiry: (inquiry: Inquiry) -> (text);
+  submitVisitorQuery: (name: text, contactInfo: text, message: text) -> ();
+  updatePost: (id: text, title: text, content: text, author: text) -> ();
+  visitorCreateId: (adminEmail: text, adminPassword: text, "service": 
+   text, visitorName: text, username: text, password: text, expiryDays:
+   nat) -> ();
+  visitorDeleteId: (adminEmail: text, adminPassword: text, username: 
+   text) -> ();
+  visitorListIds: (adminEmail: text, adminPassword: text) ->
+   (vec VisitorID) query;
+  visitorLoginByEmail: (email: text, password: text) ->
+   (opt record {
+          "service": text;
+          visitorName: text;
+        }) query;
+  visitorValidateId: ("service": text, username: text, password: text) ->
+   (bool) query;
+}
