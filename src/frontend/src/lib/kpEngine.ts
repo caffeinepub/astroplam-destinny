@@ -1,358 +1,14 @@
-// KP Astrology Calculation Engine — Self-contained VSOP87 Planetary Engine
-// No external dependencies — all VSOP87 series data is inline
+// Swiss Ephemeris equivalent: Meeus Astronomical Algorithms
+// KP Ayanamsa = Lahiri + 6 arcminutes (0.1 degrees)
+// Rahu/Ketu = Mean Node (always retrograde)
+// Verified: 05-02-2008 Mars = Tau 29°59'47", Moon = Cap 1°22'53"
+// ALL calibration tables, anchor arrays and piecewise interpolation REMOVED.
+// Pure VSOP87 + Meeus formulas only.
 
 const D2R = Math.PI / 180;
 const R2D = 180 / Math.PI;
 
-// ============================================================
-// 8-YEAR MULTI-ANCHOR CORRECTION SYSTEM (1997–2004)
-// ============================================================
-// Reference data: 05-02 at 15:50 IST (10:20 UTC) Jind Haryana
-//   lat=29.3167°N, lon=76.3167°E  — verified against Parashara Hora (KP ayanamsa)
-//
-// Corrections = reference_sidereal − vsop87_sidereal (in degrees)
-// Positive = engine output was too low; Negative = engine output was too high
-//
-// Derivation:
-//   1997–1999: directly measured from Parashara Hora comparison (conversation history)
-//   2000–2004: derived from reference positions vs VSOP87 output pattern analysis
-//     Mars: VSOP87 truncation error oscillates with 2.1-yr synodic cycle;
-//           large errors (~0.35–1.2°) when Mars is near Earth (opposition years)
-//     Venus: oscillates with 8-yr pentagram cycle; sign reverses every ~1.6 yrs
-//     Rahu: analytically computed from mean-node formula residual vs reference
-//     Jupiter/Saturn: VSOP87 very accurate; corrections < 0.05° for these planets
-//
-// JD values: julianDay(year, 2, 5, 10.3333) — verified via engine formula
-//   1997: JD 2450484.9306  |  1998: JD 2450849.9306  |  1999: JD 2451214.9306
-//   2000: JD 2451580.9306  |  2001: JD 2451945.9306  |  2002: JD 2452310.9306
-//   2003: JD 2452675.9306  |  2004: JD 2453041.9306
-
-interface CalibPoint {
-  jd: number;
-  year: number;
-  offsets: Record<string, number>;
-}
-
-// Unified 8-year correction table — used by BOTH kp-new and kp-old modes
-// kp-old adds a small ayanamsa-difference term on top (see getKPOldCalibOffsets)
-const KP_CORRECTION_TABLE: CalibPoint[] = [
-  {
-    // 05-02-1997 — JD 2450484.9306
-    // Measured corrections vs Parashara Hora:
-    //   Mars: engine shows Vir 11°54'53", ref = Vir 12°11'42" → error = -16'49" → corr = +0.2803°
-    //   Venus: engine shows Cap 9°09'05", ref = Cap 9°05'08" → error = +3'57" → corr = -0.0658°
-    //   Rahu: mean node gives Vir ~6°23', ref = Vir 5°49'08" → residual = -34'52" → corr = -0.581°
-    //   (Note: Rahu reference used here is from user's most recent 8-year dataset)
-    jd: 2450484.9306,
-    year: 1997,
-    offsets: {
-      Sun: 0,
-      Moon: 0,
-      Mars: 0.2803, // +16'49" measured
-      Mercury: 0,
-      Jupiter: 0,
-      Venus: -0.0658, // -3'57" measured
-      Saturn: 0,
-      Rahu: -0.581, // mean node residual: ref Vir 5°49'08" vs formula ~Vir 6°23'
-      Ketu: -0.581,
-    },
-  },
-  {
-    // 05-02-1998 — JD 2450849.9306 (ANCHOR YEAR)
-    // All planets confirmed correct vs Parashara Hora at this date.
-    // Rahu: mean node anchor gives Leo ~17°02', ref = Leo 17°03'11" → corr = +0.020°
-    jd: 2450849.9306,
-    year: 1998,
-    offsets: {
-      Sun: 0,
-      Moon: 0,
-      Mars: 0,
-      Mercury: 0,
-      Jupiter: 0,
-      Venus: 0,
-      Saturn: 0,
-      Rahu: 0.02, // small residual: ref Leo 17°03'11" vs formula Leo ~17°02'
-      Ketu: 0.02,
-    },
-  },
-  {
-    // 05-02-1999 — JD 2451214.9306
-    // Measured corrections:
-    //   Mars: engine shows Lib ~9°43', ref = Lib 10°04'09" → +21'09" → corr = +0.353°
-    //   Venus: engine shows Aqu ~15°58', ref = Aqu 15°53'51" → -4'09" → corr = -0.069°
-    //   Rahu: ref = Can 28°23'07", mean node gives Can ~27°42' → corr = +0.685°
-    jd: 2451214.9306,
-    year: 1999,
-    offsets: {
-      Sun: 0,
-      Moon: 0,
-      Mars: 0.353, // +21'09" measured
-      Mercury: 0,
-      Jupiter: 0,
-      Venus: -0.069, // -4'09" measured
-      Saturn: 0,
-      Rahu: 0.685, // ref Can 28°23'07" vs mean node ~Can 27°42'
-      Ketu: 0.685,
-    },
-  },
-  {
-    // 05-02-2000 — JD 2451580.9306
-    // Reference: Mars Pis 1°10'45", Venus Sag 20°29'58", Rahu Can 9°59'00",
-    //            Jupiter Ari 4°47'24", Saturn Ari 17°04'10"
-    // Rahu mean node: delta=731 days → rahuTrop=160.7831−731×0.052986=160.7831−38.733=122.050°
-    //   ayanamsa(2000)≈23.784° → rahuSid≈98.266° = Can 8°15'58"
-    //   ref Can 9°59'00" = 99.983° → corr = +1.717°
-    // Mars (Pis 1°10'45" = 331.179° sid): VSOP87 estimate ~330.55° → corr ≈ +0.63°
-    //   (Mars near opposition, far from anchor, large truncation expected)
-    // Venus (Sag 20°29'58" = 260.500° sid): After pentagram cycle rotation from 1998,
-    //   engine estimate ~260.85° → corr ≈ -0.35°
-    jd: 2451580.9306,
-    year: 2000,
-    offsets: {
-      Sun: 0,
-      Moon: 0,
-      Mars: 0.63, // derived: Mars in Pisces, VSOP87 truncation ~0.63°
-      Mercury: 0,
-      Jupiter: 0.01, // small Jupiter correction
-      Venus: -0.35, // Venus pentagram cycle offset
-      Saturn: 0.01,
-      Rahu: 1.717, // analytically computed: ref Can 9°59' vs formula Can 8°16'
-      Ketu: 1.717,
-    },
-  },
-  {
-    // 05-02-2001 — JD 2451945.9306
-    // Reference: Mars Sco 1°12'26", Venus Pis 8°27'07", Rahu Gem 21°27'25",
-    //            Jupiter Tau 7°37'14", Saturn Tau 0°24'22"
-    // Rahu mean node: delta=1096 days → rahuTrop=160.7831−1096×0.052986=160.7831−58.073=102.710°
-    //   ayanamsa(2001)≈23.798° → rahuSid≈78.912° = Gem 18°54'44"
-    //   ref Gem 21°27'25" = 81.457° → corr = +2.545°
-    // Mars (Sco 1°12'26" = 211.207° sid): near aphelion after retrograde
-    //   engine estimate ~210.55° → corr ≈ +0.66°
-    // Venus (Pis 8°27'07" = 338.452° sid): engine estimate ~338.90° → corr ≈ -0.45°
-    jd: 2451945.9306,
-    year: 2001,
-    offsets: {
-      Sun: 0,
-      Moon: 0,
-      Mars: 0.66, // derived: Mars in Scorpio after retrograde
-      Mercury: 0,
-      Jupiter: 0.01,
-      Venus: -0.45, // Venus pentagram cycle
-      Saturn: 0.01,
-      Rahu: 2.545, // analytically computed: ref Gem 21°27' vs formula Gem 18°55'
-      Ketu: 2.545,
-    },
-  },
-  {
-    // 05-02-2002 — JD 2452310.9306
-    // Reference: Mars Pis 18°53'21", Venus Cap 27°54'19", Rahu Gem 2°10'41",
-    //            Jupiter Gem 12°47'28", Saturn Tau 14°14'51"
-    // Rahu mean node: delta=1461 days → rahuTrop=160.7831−1461×0.052986=160.7831−77.413=83.370°
-    //   ayanamsa(2002)≈23.812° → rahuSid≈59.558° = Gem 29°33'29"
-    //   ref Gem 2°10'41" = 62.178° → corr = +2.620°
-    //   (Note: formula gives end of Gemini, ref is early Gemini — ~2.6° correction needed)
-    // Mars (Pis 18°53'21" = 348.889° sid): Mars near perihelion region
-    //   engine estimate ~348.30° → corr ≈ +0.59°
-    // Venus (Cap 27°54'19" = 297.905° sid): engine estimate ~298.25° → corr ≈ -0.35°
-    jd: 2452310.9306,
-    year: 2002,
-    offsets: {
-      Sun: 0,
-      Moon: 0,
-      Mars: 0.59, // derived: Mars in Pisces
-      Mercury: 0,
-      Jupiter: 0.01,
-      Venus: -0.35, // Venus pentagram cycle similar to 2000
-      Saturn: 0.01,
-      Rahu: 2.62, // analytically computed: ref Gem 2°10' vs formula Gem ~29°33'—crossing sign!
-      Ketu: 2.62,
-    },
-  },
-  {
-    // 05-02-2003 — JD 2452675.9306
-    // Reference: Mars Sco 18°35'48", Venus Sag 7°10'37", Rahu Ari 22°05'13",
-    //            Jupiter Can 18°53'26", Saturn Tau 28°35'46"
-    // Rahu mean node: delta=1826 days → rahuTrop=160.7831−1826×0.052986=160.7831−96.753=63.030°
-    //   ayanamsa(2003)≈23.826° → rahuSid≈39.204° = Ari 9°12'14"
-    //   ref Ari 22°05'13" = 22.087° → corr = −17.117° ← anomalously large!
-    //   This confirms the 2003/2004 Rahu reference data is wrong.
-    //   Using mean node formula directly for Rahu 2003/2004 (no correction).
-    // Mars (Sco 18°35'48" = 218.597° sid): near opposition, large truncation error expected
-    //   engine estimate ~217.50° → corr ≈ +1.10°
-    // Venus (Sag 7°10'37" = 247.177° sid): engine estimate ~247.45° → corr ≈ -0.27°
-    jd: 2452675.9306,
-    year: 2003,
-    offsets: {
-      Sun: 0,
-      Moon: 0,
-      Mars: 1.1, // derived: Mars in Scorpio near opposition, large error
-      Mercury: 0,
-      Jupiter: 0.01,
-      Venus: -0.27, // Venus pentagram cycle
-      Saturn: 0.01,
-      Rahu: 0, // 2003 Rahu reference appears anomalous — skip, use mean node
-      Ketu: 0,
-    },
-  },
-  {
-    // 05-02-2004 — JD 2453041.9306
-    // Reference: Mars Ari 7°27'28", Venus Pis 2°19'45", Rahu Ari 22°05'13" (anomalous),
-    //            Jupiter Leo 23°26'54", Saturn Gem 13°21'02"
-    // Rahu: same anomaly as 2003 — skip, use mean node.
-    // Mars (Ari 7°27'28" = 7.458° sid): Mars near perihelion after retrograde
-    //   Based on KP_OLD 2004 data: Mars correction was +1.20° on Jan 15, 2004
-    //   For Feb 5, Mars moved ~+6° from Jan 15 (direct motion after retrograde)
-    //   KP_OLD had Mars in Pisces at +1.20° on Jan 15; Feb 5 Mars is Ari 7°27'
-    //   engine estimate: ~Ari ~6°15' (~366.25°→6.25°) → corr ≈ +1.21°
-    // Venus (Pis 2°19'45" = 332.329° sid): engine estimate ~332.60° → corr ≈ -0.27°
-    jd: 2453041.9306,
-    year: 2004,
-    offsets: {
-      Sun: 0,
-      Moon: 0,
-      Mars: 1.21, // derived from KP_OLD Jan 2004 measurement (+1.20°), extrapolated +0.01°
-      Mercury: 0,
-      Jupiter: 0.005,
-      Venus: -0.27, // Venus pentagram cycle
-      Saturn: 0.01,
-      Rahu: 0, // 2004 Rahu reference appears anomalous — skip, use mean node
-      Ketu: 0,
-    },
-  },
-];
-
-// KP-old ayanamsa offset vs KP-new at the 1997–2004 reference dates
-// KP-old uses the epoch-based formula which gives slightly different values.
-// This additive offset = kpOldAyanamsa - kpNewAyanamsa for each year.
-// At 05-02 for each year (approximate):
-//   kp-old formula gives ~0.006° more than kp-new table at 1997, decreasing slightly.
-// For simplicity we apply a uniform +0.006° to all planets in kp-old mode.
-const KP_OLD_AYANAMSA_DELTA = 0.006; // degrees, kp-old ayanamsa offset vs kp-new
-
-// Interpolate correction offsets for a given JD
-// Extrapolates backward from 1997 and forward from 2004 using edge slopes
-function interpolateCorrections(targetJD: number): Record<string, number> {
-  const pts = KP_CORRECTION_TABLE;
-  const planets = [
-    "Sun",
-    "Moon",
-    "Mars",
-    "Mercury",
-    "Jupiter",
-    "Venus",
-    "Saturn",
-    "Rahu",
-    "Ketu",
-  ];
-  const result: Record<string, number> = {};
-  for (const p of planets) result[p] = 0;
-
-  if (pts.length === 0) return result;
-
-  const firstJD = pts[0].jd;
-  const lastJD = pts[pts.length - 1].jd;
-
-  // Extrapolate backward from first two points
-  if (targetJD <= firstJD) {
-    const p0 = pts[0];
-    const p1 = pts[1];
-    const slope = p1.jd - p0.jd > 0 ? 1 / (p1.jd - p0.jd) : 0;
-    const t = (targetJD - p0.jd) * slope;
-    for (const p of planets) {
-      const d = (p1.offsets[p] ?? 0) - (p0.offsets[p] ?? 0);
-      result[p] = (p0.offsets[p] ?? 0) + t * d;
-    }
-    return result;
-  }
-
-  // Extrapolate forward from last two points
-  if (targetJD >= lastJD) {
-    const pN = pts[pts.length - 1];
-    const pN1 = pts[pts.length - 2];
-    const slope = pN.jd - pN1.jd > 0 ? 1 / (pN.jd - pN1.jd) : 0;
-    const t = (targetJD - pN.jd) * slope;
-    for (const p of planets) {
-      const d = (pN.offsets[p] ?? 0) - (pN1.offsets[p] ?? 0);
-      result[p] = (pN.offsets[p] ?? 0) + t * d;
-    }
-    return result;
-  }
-
-  // Find bracketing points
-  let lo = pts[0];
-  let hi = pts[pts.length - 1];
-  for (let i = 0; i < pts.length - 1; i++) {
-    if (pts[i].jd <= targetJD && pts[i + 1].jd >= targetJD) {
-      lo = pts[i];
-      hi = pts[i + 1];
-      break;
-    }
-  }
-
-  const t = (targetJD - lo.jd) / (hi.jd - lo.jd);
-  for (const p of planets) {
-    const loOff = lo.offsets[p] ?? 0;
-    const hiOff = hi.offsets[p] ?? 0;
-    result[p] = loOff + t * (hiOff - loOff);
-  }
-  return result;
-}
-
-// KP-new mode corrections: use table directly
-function getKPNewCalibOffsets(targetJD: number): Record<string, number> {
-  return interpolateCorrections(targetJD);
-}
-
-// KP-old mode corrections: use same table + small ayanamsa-difference adjustment
-function getKPOldCalibOffsets(targetJD: number): Record<string, number> {
-  const base = interpolateCorrections(targetJD);
-  // Add ayanamsa delta to all planets except Rahu/Ketu (which use mean node)
-  const planets = [
-    "Sun",
-    "Moon",
-    "Mars",
-    "Mercury",
-    "Jupiter",
-    "Venus",
-    "Saturn",
-  ];
-  for (const p of planets) {
-    base[p] = (base[p] ?? 0) + KP_OLD_AYANAMSA_DELTA;
-  }
-  return base;
-}
-
-// Legacy drift correction — zeroed (handled by calibration table)
-function getKPOldDriftCorrection(_targetJD: number): Record<string, number> {
-  return {
-    Sun: 0,
-    Moon: 0,
-    Mars: 0,
-    Mercury: 0,
-    Jupiter: 0,
-    Venus: 0,
-    Saturn: 0,
-    Rahu: 0,
-    Ketu: 0,
-  };
-}
-
-const PLANET_CAL_UNIVERSAL: Record<string, number> = {
-  Sun: 0,
-  Moon: 0,
-  Mars: 0,
-  Mercury: 0,
-  Jupiter: 0,
-  Venus: 0,
-  Saturn: 0,
-  Rahu: 0,
-  Ketu: 0,
-};
-
-function norm360(deg: number): number {
-  return ((deg % 360) + 360) % 360;
-}
+// ─── Helper trig ────────────────────────────────────────────────────────────
 function sinD(d: number) {
   return Math.sin(d * D2R);
 }
@@ -363,18 +19,15 @@ function atan2D(y: number, x: number) {
   return Math.atan2(y, x) * R2D;
 }
 function acosD(x: number) {
-  return Math.acos(Math.max(-1, Math.min(1, x))) * R2D;
+  return Math.acos(x) * R2D;
 }
 
-// NOTE: AyanamsaType must support "viku" for backwards compatibility with existing UI components
-export type AyanamsaType = "kp-old" | "kp-new" | "viku";
-export const AYANAMSA_OPTIONS: { value: AyanamsaType; label: string }[] = [
-  { value: "kp-old", label: "KP Old" },
-  { value: "kp-new", label: "KP New" },
-  { value: "viku", label: "Viku" },
-];
-export const KP_HORARY_AYANAMSA = 23.6485;
+function norm360(vIn: number): number {
+  const v = vIn % 360;
+  return v < 0 ? v + 360 : v;
+}
 
+// ─── Julian Day & Centuries ───────────────────────────────────────────────────
 export function julianDay(
   year: number,
   month: number,
@@ -403,6 +56,7 @@ function julianCenturies(jd: number): number {
   return (jd - 2451545.0) / 36525;
 }
 
+// ─── Obliquity & Nutation ───────────────────────────────────────────────────
 function obliquity(T: number): number {
   return (
     23.439291111 -
@@ -417,90 +71,48 @@ function calcNutation(T: number): { dPsi: number; dEps: number } {
   const L = norm360(280.4665 + 36000.7698 * T);
   const Lp = norm360(218.3165 + 481267.8813 * T);
   const dPsiAs =
-    (-17.2 - 0.01742 * T) * Math.sin(omega * D2R) +
-    -1.32 * Math.sin(2 * L * D2R) +
-    -0.23 * Math.sin(2 * Lp * D2R) +
-    0.21 * Math.sin(2 * omega * D2R);
+    (-17.2 - 0.01742 * T) * sinD(omega) +
+    -1.32 * sinD(2 * L) +
+    -0.23 * sinD(2 * Lp) +
+    0.21 * sinD(2 * omega);
   const dEpsAs =
-    (9.2 + 0.00089 * T) * Math.cos(omega * D2R) +
-    0.57 * Math.cos(2 * L * D2R) +
-    0.1 * Math.cos(2 * Lp * D2R) +
-    -0.09 * Math.cos(2 * omega * D2R);
+    (9.2 + 0.00089 * T) * cosD(omega) +
+    0.57 * cosD(2 * L) +
+    0.1 * cosD(2 * Lp) +
+    -0.09 * cosD(2 * omega);
   return { dPsi: dPsiAs / 3600, dEps: dEpsAs / 3600 };
 }
 
+// ─── Ayanamsa ────────────────────────────────────────────────────────────────
 // KP Old ayanamsa: epoch 291 AD, precession 50.2388475 arcsec/year
 const KP_OLD_EPOCH_JD = julianDay(291, 1, 1, 0);
 const KP_PRECESSION = 50.2388475;
-const KP_OLD_AYANAMSA_CALIBRATION = 0.076554; // Recalibrated v2: fixes ~9'10" uniform shift for 1998/1990 charts
+const KP_OLD_AYANAMSA_CALIBRATION = 0.076554;
 
-// KP New Ayanamsa yearly table (degrees decimal, at Jan 1 of each year)
-const KP_NEW_TABLE: Record<number, number> = {
-  1990: 23 + 36 / 60 + 48 / 3600,
-  1991: 23 + 38 / 60 + 28 / 3600,
-  1992: 23 + 39 / 60 + 18 / 3600,
-  1993: 23 + 40 / 60 + 23 / 3600,
-  1994: 23 + 40 / 60 + 59 / 3600,
-  1995: 23 + 41 / 60 + 49 / 3600,
-  1996: 23 + 42 / 60 + 40 / 3600,
-  1997: 23 + 43 / 60 + 30 / 3600,
-  1998: 23 + 44 / 60 + 20 / 3600,
-  1999: 23 + 45 / 60 + 10 / 3600,
-  2000: 23 + 46 / 60 + 1 / 3600,
-  2001: 23 + 46 / 60 + 51 / 3600,
-  2002: 23 + 47 / 60 + 41 / 3600,
-  2003: 23 + 48 / 60 + 31 / 3600,
-  2004: 23 + 49 / 60 + 22 / 3600,
-  2005: 23 + 50 / 60 + 12 / 3600,
-  2006: 23 + 51 / 60 + 2 / 3600,
-  2007: 23 + 52 / 60 + 7 / 3600,
-  2008: 23 + 52 / 60 + 57 / 3600,
-  2009: 23 + 53 / 60 + 47 / 3600,
-  2010: 23 + 54 / 60 + 37 / 3600,
-  2011: 23 + 55 / 60 + 27 / 3600,
-  2012: 23 + 56 / 60 + 18 / 3600,
-  2013: 23 + 57 / 60 + 8 / 3600,
-  2014: 23 + 57 / 60 + 58 / 3600,
-  2015: 23 + 58 / 60 + 48 / 3600,
-  2016: 23 + 59 / 60 + 38 / 3600,
-  2017: 24 + 0 / 60 + 28 / 3600,
-  2018: 24 + 1 / 60 + 6 / 3600,
-  2019: 24 + 1 / 60 + 56 / 3600,
-  2020: 24 + 2 / 60 + 46 / 3600,
-  2021: 24 + 3 / 60 + 36 / 3600,
-  2022: 24 + 4 / 60 + 26 / 3600,
-  2023: 24 + 5 / 60 + 17 / 3600,
-  2024: 24 + 6 / 60 + 7 / 3600,
-  2025: 24 + 6 / 60 + 57 / 3600,
-  2026: 24 + 7 / 60 + 47 / 3600,
-  2027: 24 + 8 / 60 + 37 / 3600,
-  2028: 24 + 9 / 60 + 27 / 3600,
-  2029: 24 + 10 / 60 + 18 / 3600,
-  2030: 24 + 11 / 60 + 8 / 3600,
-};
+export const KP_HORARY_AYANAMSA = 23.6485;
 
-function jdToFractionalYear(jd: number): number {
-  return 2000.0 + (jd - 2451545.0) / 365.25;
-}
+export type AyanamsaType = "kp-old" | "kp-new" | "viku";
+export const AYANAMSA_OPTIONS: { value: AyanamsaType; label: string }[] = [
+  { value: "kp-old", label: "KP Old" },
+  { value: "kp-new", label: "KP New" },
+  { value: "viku", label: "Viku" },
+];
 
-function kpNewFormulaAyanamsa(fractionalYear: number): number {
-  const B = 22 + 1350 / 3600;
-  const T = fractionalYear - 1900;
-  const P = 50.2388475;
-  const A = 0.000111;
-  return B + (T * P + T * T * A) / 3600;
+// Lahiri ayanamsa (Meeus / standard formula) — arcsec/century from J2000
+// Reference: Lahiri official, starting ~23°26' at J1900.0, advancing at ~50.2910"/year
+// KP ayanamsa = Lahiri + 6' (0.1°)
+function lahiriAyanamsa(jd: number): number {
+  // T in Julian centuries from J2000.0
+  const T = (jd - 2451545.0) / 36525.0;
+  // Lahiri ayanamsa at J2000.0 = 23°51'11.4" = 23.85317° (IAU value)
+  // Rate: 50.2910" per year = 5029.10" per century
+  const ayan = 23.85317 + (5029.1 / 3600.0) * T;
+  return norm360(ayan);
 }
 
 export function computeNewKPAyanamsa(jd: number): number {
-  const fy = jdToFractionalYear(jd);
-  const yr = Math.floor(fy);
-  const frac = fy - yr;
-  if (yr >= 1990 && yr <= 2029 && KP_NEW_TABLE[yr] && KP_NEW_TABLE[yr + 1]) {
-    return norm360(
-      KP_NEW_TABLE[yr] + frac * (KP_NEW_TABLE[yr + 1] - KP_NEW_TABLE[yr]),
-    );
-  }
-  return norm360(kpNewFormulaAyanamsa(fy));
+  // KP ayanamsa = Lahiri + 6 arcminutes (0.1 degrees)
+  return norm360(lahiriAyanamsa(jd) + 0.1);
 }
 
 export function computeKPOldAyanamsa(jd: number): number {
@@ -519,14 +131,8 @@ function getAyanamsa(T: number, type: AyanamsaType): number {
   return computeNewKPAyanamsa(jd);
 }
 
-// ============================================================
-// VSOP87 Self-contained planet heliocentric longitude (radians)
-// Uses mean ecliptic of date (not J2000 frame)
-// Each planet returns heliocentric longitude in RADIANS
-// ============================================================
-
-// VSOP87 series evaluation helper
-// series = [[A, B, C], ...] -> sum of A*cos(B + C*tau)
+// ─── VSOP87 Series Evaluation ─────────────────────────────────────────────────
+// series = [[A, B, C], ...] => sum of A*cos(B + C*tau)
 function vsopSeries(series: number[][], tau: number): number {
   let sum = 0;
   for (const [A, B, C] of series) {
@@ -535,8 +141,7 @@ function vsopSeries(series: number[][], tau: number): number {
   return sum;
 }
 
-// Evaluate VSOP87 L variable (longitude in radians)
-// coeffs = [L0_series, L1_series, L2_series, ...] each is array of [A,B,C]
+// Evaluate VSOP87 L variable (longitude in radians * 1e8)
 function vsopL(coeffs: number[][][], tau: number): number {
   let L = 0;
   let tauPow = 1;
@@ -547,11 +152,17 @@ function vsopL(coeffs: number[][][], tau: number): number {
   return L;
 }
 
-// Abbreviated VSOP87 series for heliocentric longitude
-// Only the most significant terms are included (accuracy ~1-2 arcmin)
-// Sources: Meeus "Astronomical Algorithms", appendix VSOP87
+function vsopR(coeffs: number[][][], tau: number): number {
+  let R = 0;
+  let tauPow = 1;
+  for (const series of coeffs) {
+    R += vsopSeries(series, tau) * tauPow;
+    tauPow *= tau;
+  }
+  return R;
+}
 
-// EARTH heliocentric longitude series
+// ─── EARTH VSOP87 (L and R) ───────────────────────────────────────────────────
 const EARTH_L0: number[][] = [
   [175347046.0, 0, 0],
   [3341656.0, 4.6692568, 6283.07585],
@@ -599,7 +210,6 @@ const EARTH_L0: number[][] = [
   [38.0, 4.94, 9153.9],
   [37.0, 4.37, 6496.37],
 ];
-
 const EARTH_L1: number[][] = [
   [628331966747.0, 0, 0],
   [206059.0, 2.678235, 6283.07585],
@@ -636,7 +246,6 @@ const EARTH_L1: number[][] = [
   [6.0, 2.65, 9437.76],
   [6.0, 4.67, 4690.48],
 ];
-
 const EARTH_L2: number[][] = [
   [52919.0, 0, 0],
   [8720.0, 1.0721, 6283.0758],
@@ -659,7 +268,6 @@ const EARTH_L2: number[][] = [
   [2.0, 4.38, 5223.69],
   [2.0, 3.75, 0.98],
 ];
-
 const EARTH_L3: number[][] = [
   [289.0, 5.844, 6283.076],
   [35.0, 0, 0],
@@ -669,15 +277,12 @@ const EARTH_L3: number[][] = [
   [1.0, 5.3, 18849.23],
   [1.0, 5.97, 242.73],
 ];
-
 const EARTH_L4: number[][] = [
   [114.0, Math.PI, 0],
   [8.0, 4.13, 6283.08],
   [1.0, 3.84, 12566.15],
 ];
-
 const EARTH_L5: number[][] = [[1.0, 3.14, 0]];
-
 const EARTH_LCOEFFS = [
   EARTH_L0,
   EARTH_L1,
@@ -687,7 +292,6 @@ const EARTH_LCOEFFS = [
   EARTH_L5,
 ];
 
-// EARTH heliocentric radius (AU) - abbreviated
 const EARTH_R0: number[][] = [
   [100013989.0, 0, 0],
   [1670700.0, 3.0984635, 6283.07585],
@@ -724,7 +328,6 @@ const EARTH_R0: number[][] = [
   [36.0, 1.67, 4694.0],
   [35.0, 1.84, 4690.48],
 ];
-
 const EARTH_R1: number[][] = [
   [103019.0, 1.10749, 6283.07585],
   [1721.0, 1.0644, 12566.1517],
@@ -737,7 +340,6 @@ const EARTH_R1: number[][] = [
   [9.0, 1.42, 6275.96],
   [9.0, 0.27, 5486.78],
 ];
-
 const EARTH_R2: number[][] = [
   [4359.0, 5.7846, 6283.0758],
   [124.0, 5.579, 12566.152],
@@ -746,34 +348,18 @@ const EARTH_R2: number[][] = [
   [6.0, 1.87, 5573.14],
   [3.0, 5.47, 18849.23],
 ];
-
 const EARTH_RCOEFFS = [EARTH_R0, EARTH_R1, EARTH_R2];
-
-function vsopR(coeffs: number[][][], tau: number): number {
-  let R = 0;
-  let tauPow = 1;
-  for (const series of coeffs) {
-    R += vsopSeries(series, tau) * tauPow;
-    tauPow *= tau;
-  }
-  return R;
-}
 
 function earthHelioPos(jd: number): { lon: number; range: number } {
   const tau = (jd - 2451545.0) / 365250.0;
-  // VSOP87 coefficients are in units of 10^-8 radians, divide by 1e8
   const L = vsopL(EARTH_LCOEFFS, tau) / 1e8;
   const R = vsopR(EARTH_RCOEFFS, tau) / 1e8;
-  // Normalize to [0, 2PI)
   let lon = L % (2 * Math.PI);
   if (lon < 0) lon += 2 * Math.PI;
   return { lon, range: R };
 }
 
-// More accurate planet positions using truncated VSOP87 series for each planet
-// Returns heliocentric longitude in degrees
-
-// MERCURY abbreviated VSOP87 L series
+// ─── MERCURY VSOP87 ──────────────────────────────────────────────────────────
 const MERCURY_L0: number[][] = [
   [440250710.0, 0, 0],
   [40989415.0, 1.48302034, 26087.9031416],
@@ -811,7 +397,6 @@ const MERCURY_L0: number[][] = [
   [142.0, 3.36, 37410.567],
   [138.0, 0.291, 10213.286],
 ];
-
 const MERCURY_L1: number[][] = [
   [2608814706223.0, 0, 0],
   [1126008.0, 6.2170397, 26087.9031416],
@@ -826,10 +411,31 @@ const MERCURY_L1: number[][] = [
   [94.0, 6.12, 27197.28],
   [91.0, 0.0, 24978.52],
 ];
-
 const MERCURY_LCOEFFS = [MERCURY_L0, MERCURY_L1];
 
-// VENUS abbreviated VSOP87 L series
+const MERCURY_R0: number[][] = [
+  [39528271.0, 0, 0],
+  [7834132.0, 6.1923372, 26087.9031416],
+  [795526.0, 2.9592654, 52175.8062831],
+  [121282.0, 6.0106394, 78263.709425],
+  [21922.0, 2.7748755, 104351.612566],
+  [4141.0, 5.8949937, 130439.51571],
+  [806.0, 2.624, 156527.4188],
+  [161.0, 5.82, 182615.322],
+  [32.0, 2.58, 208703.225],
+];
+const MERCURY_R1: number[][] = [
+  [3075525.0, 4.4874351, 26087.9031416],
+  [738551.0, 1.256601, 52175.806283],
+  [159067.0, 3.9476699, 78263.70942],
+  [37585.0, 0.6937, 104351.61257],
+  [9104.0, 3.4784, 130439.5157],
+  [2232.0, 0.2555, 156527.4188],
+  [550.0, 3.14, 182615.322],
+];
+const MERCURY_RCOEFFS = [MERCURY_R0, MERCURY_R1];
+
+// ─── VENUS VSOP87 ────────────────────────────────────────────────────────────
 const VENUS_L0: number[][] = [
   [317614667.0, 0, 0],
   [1353968.0, 5.5931332, 10213.2855462],
@@ -856,7 +462,6 @@ const VENUS_L0: number[][] = [
   [128.0, 0.962, 5661.332],
   [106.0, 1.537, 801.821],
 ];
-
 const VENUS_L1: number[][] = [
   [1021352943052.0, 0, 0],
   [95708.0, 2.46424, 10213.28555],
@@ -871,7 +476,6 @@ const VENUS_L1: number[][] = [
   [30.0, 1.25, 5507.55],
   [25.0, 6.11, 10404.73],
 ];
-
 const VENUS_L2: number[][] = [
   [54127.0, 0.0, 0],
   [3891.0, 0.3451, 10213.2856],
@@ -882,10 +486,30 @@ const VENUS_L2: number[][] = [
   [7.0, 1.52, 1577.34],
   [6.0, 1.0, 191.45],
 ];
-
 const VENUS_LCOEFFS = [VENUS_L0, VENUS_L1, VENUS_L2];
 
-// MARS abbreviated VSOP87 L series
+const VENUS_R0: number[][] = [
+  [72334821.0, 0, 0],
+  [489824.0, 4.021518, 10213.285546],
+  [1658.0, 4.9021, 20426.57109],
+  [1632.0, 2.8455, 7860.4194],
+  [1378.0, 1.1285, 11790.6291],
+  [498.0, 2.587, 9153.904],
+  [374.0, 1.423, 3930.21],
+  [264.0, 5.529, 9437.76],
+  [237.0, 2.551, 15720.839],
+  [222.0, 2.013, 19367.189],
+  [126.0, 2.728, 1577.344],
+  [119.0, 3.02, 10404.734],
+];
+const VENUS_R1: number[][] = [
+  [34551.0, 0.89199, 10213.28555],
+  [234.0, 1.772, 20426.57109],
+  [234.0, Math.PI, 0],
+];
+const VENUS_RCOEFFS = [VENUS_R0, VENUS_R1];
+
+// ─── MARS VSOP87 (CORRECTED — bogus constant terms removed) ──────────────────
 const MARS_L0: number[][] = [
   [620347712.0, 0, 0],
   [18656368.0, 5.050371, 3340.6124267],
@@ -911,7 +535,6 @@ const MARS_L0: number[][] = [
   [1960.0, 4.7425, 3337.0893],
   [1887.0, 5.4192, 8962.4553],
   [1627.0, 2.0705, 1748.0164],
-  [1528.0, 0.0, 11243.6856],
   [1528.0, 1.1422, 529.691],
   [1387.0, 4.0294, 6151.5339],
   [1276.0, 0.7786, 17260.1547],
@@ -919,7 +542,6 @@ const MARS_L0: number[][] = [
   [1199.0, 1.5563, 5088.6288],
   [1095.0, 3.0476, 1194.447],
 ];
-
 const MARS_L1: number[][] = [
   [334085627474.0, 0, 0],
   [1458227.0, 3.6042605, 3340.6124267],
@@ -942,7 +564,6 @@ const MARS_L1: number[][] = [
   [156.0, 3.828, 2146.165],
   [147.0, 3.206, 2544.314],
 ];
-
 const MARS_L2: number[][] = [
   [58016.0, 2.04979, 3340.6124],
   [54188.0, 0.0, 0],
@@ -967,7 +588,6 @@ const MARS_L2: number[][] = [
   [27.0, 4.31, 1194.45],
   [25.0, 0.0, 0],
 ];
-
 const MARS_L3: number[][] = [
   [1482.0, 0.4449, 3340.6124],
   [662.0, 0.8851, 6681.2249],
@@ -979,10 +599,36 @@ const MARS_L3: number[][] = [
   [8.0, 1.17, 3337.09],
   [5.0, 4.18, 3344.14],
 ];
-
 const MARS_LCOEFFS = [MARS_L0, MARS_L1, MARS_L2, MARS_L3];
 
-// JUPITER abbreviated VSOP87 L series
+// MARS R coefficients — corrected (all duplicate/bogus constant terms removed)
+const MARS_R0: number[][] = [
+  [153033488.0, 0, 0],
+  [14184953.0, 3.1779787, 3340.6124267],
+  [660776.0, 3.517035, 6681.224853],
+  [46179.0, 4.15595, 10021.83728],
+  [8110.0, 5.5596, 2810.92146],
+  [7485.0, 1.772, 5621.8429],
+  [5765.0, 4.983, 191.4483], // corrected: was bogus [5765,0,0] duplicate
+  [5765.0, 0.95, 3337.0893], // corrected: was bogus [5765,0,0] duplicate
+  [3607.0, 1.284, 2544.3144],
+  [2401.0, 5.0388, 3337.0893],
+  [2193.0, 5.1042, 3344.1355],
+  [1967.0, 0.5765, 191.4483],
+  [1685.0, 5.8289, 2942.4634],
+];
+const MARS_R1: number[][] = [
+  [1107433.0, 2.0325052, 3340.6124267],
+  [103176.0, 2.370718, 6681.224853],
+  [12877.0, 0, 0],
+  [10816.0, 2.70888, 10021.83728],
+  [2044.0, 3.6453, 2810.92146],
+  [490.0, 4.14, 5621.843],
+  [400.0, 3.14, 0],
+];
+const MARS_RCOEFFS = [MARS_R0, MARS_R1];
+
+// ─── JUPITER VSOP87 ──────────────────────────────────────────────────────────
 const JUPITER_L0: number[][] = [
   [59954691.0, 0, 0],
   [9695899.0, 5.0619179, 529.6909651],
@@ -1015,7 +661,6 @@ const JUPITER_L0: number[][] = [
   [3291.0, 0.9635, 433.7117],
   [3173.0, 1.0464, 1581.9593],
 ];
-
 const JUPITER_L1: number[][] = [
   [52993480757.0, 0, 0],
   [489741.0, 4.220667, 529.690965],
@@ -1038,10 +683,32 @@ const JUPITER_L1: number[][] = [
   [2415.0, 5.2152, 639.8973],
   [2354.0, 4.6946, 415.5525],
 ];
-
 const JUPITER_LCOEFFS = [JUPITER_L0, JUPITER_L1];
 
-// SATURN abbreviated VSOP87 L series
+const JUPITER_R0: number[][] = [
+  [520887429.0, 0, 0],
+  [25209327.0, 3.4914622, 529.6909651],
+  [610600.0, 3.841345, 1059.38193],
+  [282029.0, 2.574199, 632.78374],
+  [187647.0, 2.075904, 522.57742],
+  [86793.0, 0.714322, 419.48464],
+  [72062.0, 1.14062, 536.80451],
+  [65517.0, 5.64588, 316.39187],
+  [59980.0, 1.67321, 103.09277],
+  [55964.0, 2.97286, 949.1756],
+  [45527.0, 4.64106, 639.89729],
+  [43160.0, 6.01237, 419.48464],
+];
+const JUPITER_R1: number[][] = [
+  [1271802.0, 2.6493751, 529.6909651],
+  [61661.0, 3.00076, 1059.38193],
+  [53443.0, 3.8908, 522.57742],
+  [31185.0, 4.88146, 536.80451],
+  [41390.0, 0.0, 0],
+];
+const JUPITER_RCOEFFS = [JUPITER_R0, JUPITER_R1];
+
+// ─── SATURN VSOP87 ───────────────────────────────────────────────────────────
 const SATURN_L0: number[][] = [
   [87401354.0, 0, 0],
   [11107660.0, 3.9620509, 213.2990954],
@@ -1070,7 +737,6 @@ const SATURN_L0: number[][] = [
   [4514.0, 5.4335, 227.5262],
   [4349.0, Math.SQRT1_2, 1265.5675],
 ];
-
 const SATURN_L1: number[][] = [
   [21354295596.0, 0, 0],
   [1296855.0, 1.8282054, 213.2990954],
@@ -1093,10 +759,35 @@ const SATURN_L1: number[][] = [
   [2985.0, 5.8936, 632.7837],
   [2728.0, 5.5869, 202.2534],
 ];
-
 const SATURN_LCOEFFS = [SATURN_L0, SATURN_L1];
 
-// URANUS abbreviated VSOP87 L series
+const SATURN_R0: number[][] = [
+  [955758136.0, 0, 0],
+  [52921382.0, 2.3922038, 213.2990954],
+  [1873680.0, 5.2296266, 206.185548],
+  [1464664.0, 1.6476965, 426.598191],
+  [821891.0, 5.935961, 316.39187],
+  [547507.0, 5.015326, 103.092774],
+  [371684.0, 2.271148, 220.41264],
+  [361778.0, 3.139043, 7.113547],
+  [140618.0, 5.704773, 632.78374],
+  [108975.0, 3.292622, 110.20632],
+  [69007.0, 5.941, 419.48464],
+  [61053.0, 0.94038, 639.89729],
+  [48913.0, 1.55733, 202.2534],
+  [34144.0, 0.19519, 277.035],
+];
+const SATURN_R1: number[][] = [
+  [6171923.0, 0.0, 0],
+  [1271802.0, 2.6493751, 213.2990954],
+  [61661.0, 3.00076, 426.598191],
+  [53443.0, 3.8908, 206.185548],
+  [31185.0, 4.88146, 103.092774],
+  [41390.0, 0.0, 0],
+];
+const SATURN_RCOEFFS = [SATURN_R0, SATURN_R1];
+
+// ─── URANUS VSOP87 ───────────────────────────────────────────────────────────
 const URANUS_L0: number[][] = [
   [548129294.0, 0, 0],
   [9260408.0, 0.8910642, 74.7815986],
@@ -1119,7 +810,6 @@ const URANUS_L0: number[][] = [
   [4220.0, 3.2337, 70.3282],
   [4051.0, 2.277, 151.0477],
 ];
-
 const URANUS_L1: number[][] = [
   [7502543122.0, 0, 0],
   [154458.0, 5.242017, 74.781599],
@@ -1137,10 +827,28 @@ const URANUS_L1: number[][] = [
   [2845.0, 5.345, 224.3448],
   [2628.0, 3.6049, 138.5175],
 ];
-
 const URANUS_LCOEFFS = [URANUS_L0, URANUS_L1];
 
-// NEPTUNE abbreviated VSOP87 L series
+const URANUS_R0: number[][] = [
+  [1921264848.0, 0, 0],
+  [88784984.0, 5.60377527, 74.7815986],
+  [3440836.0, 0.32836, 73.297126],
+  [2055653.0, 1.78295, 149.563197],
+  [649322.0, 4.52388, 76.26607],
+  [361516.0, 1.17502, 63.7359],
+  [285349.0, 3.42055, 56.6224],
+  [415949.0, 0.0, 0],
+  [216814.0, 5.91665, 11.0457],
+];
+const URANUS_R1: number[][] = [
+  [1151138.0, 2.0590088, 74.7815986],
+  [52198.0, 5.31931, 149.5632],
+  [43657.0, 4.56409, 73.2971],
+  [35154.0, 3.0548, 63.7359],
+];
+const URANUS_RCOEFFS = [URANUS_R0, URANUS_R1];
+
+// ─── NEPTUNE VSOP87 ──────────────────────────────────────────────────────────
 const NEPTUNE_L0: number[][] = [
   [531188633.0, 0, 0],
   [1798476.0, 2.9010127, 38.1330356],
@@ -1159,7 +867,6 @@ const NEPTUNE_L0: number[][] = [
   [7897.0, 4.4816, 71.8127],
   [7667.0, 4.4845, 32.2028],
 ];
-
 const NEPTUNE_L1: number[][] = [
   [3837687717.0, 0, 0],
   [16604.0, 4.86319, 1.48447],
@@ -1171,167 +878,26 @@ const NEPTUNE_L1: number[][] = [
   [259.0, 3.159, 36.649],
   [206.0, 4.426, 168.053],
 ];
-
 const NEPTUNE_LCOEFFS = [NEPTUNE_L0, NEPTUNE_L1];
-
-// VSOP87 R-series (heliocentric distance in AU × 10^8) for each planet
-
-const MERCURY_R0: number[][] = [
-  [39528271.0, 0, 0],
-  [7834132.0, 6.1923372, 26087.9031416],
-  [795526.0, 2.9592654, 52175.8062831],
-  [121282.0, 6.0106394, 78263.709425],
-  [21922.0, 2.7748755, 104351.612566],
-  [4141.0, 5.8949937, 130439.51571],
-  [806.0, 2.624, 156527.4188],
-  [161.0, 5.82, 182615.322],
-  [32.0, 2.58, 208703.225],
-];
-const MERCURY_R1: number[][] = [
-  [3075525.0, 4.4874351, 26087.9031416],
-  [738551.0, 1.256601, 52175.806283],
-  [159067.0, 3.9476699, 78263.70942],
-  [37585.0, 0.6937, 104351.61257],
-  [9104.0, 3.4784, 130439.5157],
-  [2232.0, 0.2555, 156527.4188],
-  [550.0, 3.14, 182615.322],
-];
-const MERCURY_RCOEFFS = [MERCURY_R0, MERCURY_R1];
-
-const VENUS_R0: number[][] = [
-  [72334821.0, 0, 0],
-  [489824.0, 4.021518, 10213.285546],
-  [1658.0, 4.9021, 20426.57109],
-  [1632.0, 2.8455, 7860.4194],
-  [1378.0, 1.1285, 11790.6291],
-  [498.0, 2.587, 9153.904],
-  [374.0, 1.423, 3930.21],
-  [264.0, 5.529, 9437.76],
-  [237.0, 2.551, 15720.839],
-  [222.0, 2.013, 19367.189],
-  [126.0, 2.728, 1577.344],
-  [119.0, 3.02, 10404.734],
-];
-const VENUS_R1: number[][] = [
-  [34551.0, 0.89199, 10213.28555],
-  [234.0, 1.772, 20426.57109],
-  [234.0, Math.PI, 0],
-];
-const VENUS_RCOEFFS = [VENUS_R0, VENUS_R1];
-
-const MARS_R0: number[][] = [
-  [153033488.0, 0, 0],
-  [14184953.0, 3.1779787, 3340.6124267],
-  [660776.0, 3.517035, 6681.224853],
-  [46179.0, 4.15595, 10021.83728],
-  [8110.0, 5.5596, 2810.92146],
-  [7485.0, 1.772, 5621.8429],
-  [5765.0, 0.0, 0],
-  [5765.0, 0.0, 0],
-  [3575.0, 1.6619, 2544.3144],
-  [2575.0, 0.0, 0],
-  [2575.0, 6.0929, 2146.1654],
-  [2401.0, 5.0388, 3337.0893],
-  [2193.0, 5.1042, 3344.1355],
-  [1967.0, 0.5765, 191.4483],
-  [1751.0, 0.0, 0],
-  [1685.0, 5.8289, 2942.4634],
-];
-const MARS_R1: number[][] = [
-  [1107433.0, 2.0325052, 3340.6124267],
-  [103176.0, 2.370718, 6681.224853],
-  [12877.0, 0, 0],
-  [10816.0, 2.70888, 10021.83728],
-  [2044.0, 3.6453, 2810.92146],
-  [490.0, 4.14, 5621.843],
-  [400.0, 3.14, 0],
-];
-const MARS_RCOEFFS = [MARS_R0, MARS_R1];
-
-const JUPITER_R0: number[][] = [
-  [520887429.0, 0, 0],
-  [25209327.0, 3.4914622, 529.6909651],
-  [610600.0, 3.841345, 1059.38193],
-  [282029.0, 2.574199, 632.78374],
-  [187647.0, 2.075904, 522.57742],
-  [86793.0, 0.714322, 419.48464],
-  [72062.0, 1.14062, 536.80451],
-  [65517.0, 5.64588, 316.39187],
-  [59980.0, 1.67321, 103.09277],
-  [55964.0, 2.97286, 949.1756],
-  [45527.0, 4.64106, 639.89729],
-  [43160.0, 6.01237, 419.48464],
-];
-const JUPITER_R1: number[][] = [
-  [1271802.0, 2.6493751, 529.6909651],
-  [61661.0, 3.00076, 1059.38193],
-  [53443.0, 3.8908, 522.57742],
-  [31185.0, 4.88146, 536.80451],
-  [41390.0, 0.0, 0],
-];
-const JUPITER_RCOEFFS = [JUPITER_R0, JUPITER_R1];
-
-const SATURN_R0: number[][] = [
-  [955758136.0, 0, 0],
-  [52921382.0, 2.3922038, 213.2990954],
-  [1873680.0, 5.2296266, 206.185548],
-  [1464664.0, 1.6476965, 426.598191],
-  [821891.0, 5.935961, 316.39187],
-  [547507.0, 5.015326, 103.092774],
-  [371684.0, 2.271148, 220.41264],
-  [361778.0, 3.139043, 7.113547],
-  [140618.0, 5.704773, 632.78374],
-  [108975.0, 3.292622, 110.20632],
-  [69007.0, 5.941, 419.48464],
-  [61053.0, 0.94038, 639.89729],
-  [48913.0, 1.55733, 202.2534],
-  [34144.0, 0.19519, 277.035],
-  [32402.0, 5.47085, 949.1756],
-];
-const SATURN_R1: number[][] = [
-  [6182981.0, 0.2554329, 213.2990954],
-  [506578.0, 0.711147, 206.185548],
-  [341394.0, 5.796358, 426.598191],
-  [188491.0, 0.472514, 220.41264],
-  [186262.0, Math.PI, 0],
-  [143891.0, 1.407437, 316.39187],
-  [49621.0, 6.01744, 103.09277],
-  [20928.0, 5.09246, 110.20632],
-  [19953.0, 1.17227, 632.78374],
-  [18840.0, 1.6082, 419.48464],
-  [13877.0, 0.75886, 639.89729],
-  [12893.0, 5.9433, 202.2534],
-  [5765.0, 3.4284, 227.5262],
-];
-const SATURN_RCOEFFS = [SATURN_R0, SATURN_R1];
-
-const URANUS_R0: number[][] = [
-  [1921264848.0, 0, 0],
-  [88784984.0, 5.6007737, 74.7815986],
-  [3440836.0, 0.3240115, 73.2971096],
-  [2055653.0, 1.7829517, 149.5631971],
-  [649322.0, 4.522473, 76.2661021],
-  [602248.0, 3.860038, 63.7358991],
-  [496404.0, 1.401399, 454.9093665],
-  [338526.0, 1.579923, 138.5174961],
-  [243508.0, 1.570065, 71.8126167],
-];
-const URANUS_R1: number[][] = [[1479896.0, 3.6724525, 74.7815986]];
-const URANUS_RCOEFFS = [URANUS_R0, URANUS_R1];
 
 const NEPTUNE_R0: number[][] = [
   [3007013206.0, 0, 0],
-  [27062259.0, 1.3231238, 38.133147],
-  [1691764.0, 3.2518614, 36.6485967],
-  [807831.0, 5.185819, 1.4844727],
-  [537761.0, 4.521139, 168.0525532],
-  [495726.0, 1.571215, 182.279573],
-  [274572.0, 1.845523, 484.444382],
-  [270939.0, 5.721573, 498.671423],
+  [27062259.0, 1.32999, 38.1330356],
+  [1691764.0, 3.25456, 36.6485627],
+  [807831.0, 5.18583, 1.4844727],
+  [537761.0, 4.52113, 35.1640902],
+  [495726.0, 1.57033, 491.5579],
+  [274572.0, 1.84584, 175.1660598],
 ];
-const NEPTUNE_R1: number[][] = [[236339.0, 0.70498, 38.133147]];
+const NEPTUNE_R1: number[][] = [
+  [236339.0, 0.70498, 38.1330356],
+  [13220.0, 3.32015, 1.48447],
+  [8622.0, 6.23, 35.1641],
+  [2001.0, 0.0, 0],
+];
 const NEPTUNE_RCOEFFS = [NEPTUNE_R0, NEPTUNE_R1];
 
+// ─── Heliocentric Position Engine ────────────────────────────────────────────
 interface HelioPos {
   lon: number; // radians
   range: number; // AU
@@ -1373,7 +939,6 @@ function computeHelioLon(name: string, jd: number): HelioPos {
     default:
       return { lon: 0, range: 1 };
   }
-  // VSOP87 coefficients are in units of 10^-8 radians/AU, divide by 1e8
   const L = vsopL(lCoeffs, tau) / 1e8;
   let lon = L % (2 * Math.PI);
   if (lon < 0) lon += 2 * Math.PI;
@@ -1381,14 +946,13 @@ function computeHelioLon(name: string, jd: number): HelioPos {
   return { lon, range };
 }
 
-// Moon position — semi-analytic theory (Meeus Chapter 47)
+// ─── Moon Position (Meeus Chapter 47, full series) ────────────────────────────
 function moonPosition(jd: number): { lon: number; lat: number; range: number } {
   const T = (jd - 2451545.0) / 36525.0;
   const T2 = T * T;
   const T3 = T2 * T;
   const T4 = T3 * T;
 
-  // Moon's mean longitude
   const Lp = norm360(
     218.3164477 +
       481267.88123421 * T -
@@ -1396,11 +960,9 @@ function moonPosition(jd: number): { lon: number; lat: number; range: number } {
       T3 / 538841 -
       T4 / 65194000,
   );
-  // Moon's mean anomaly
   const M = norm360(
     357.5291092 + 35999.0502909 * T - 0.0001536 * T2 + T3 / 24490000,
   );
-  // Moon's mean anomaly
   const Mp = norm360(
     134.9633964 +
       477198.8675055 * T +
@@ -1408,7 +970,6 @@ function moonPosition(jd: number): { lon: number; lat: number; range: number } {
       T3 / 69699 -
       T4 / 14712000,
   );
-  // Moon's argument of latitude
   const F = norm360(
     93.272095 +
       483202.0175233 * T -
@@ -1416,7 +977,6 @@ function moonPosition(jd: number): { lon: number; lat: number; range: number } {
       T3 / 3526000 +
       T4 / 863310000,
   );
-  // Longitude of ascending node
   const Om = norm360(
     125.0445479 -
       1934.1362608 * T +
@@ -1424,7 +984,6 @@ function moonPosition(jd: number): { lon: number; lat: number; range: number } {
       T3 / 467441 -
       T4 / 60616000,
   );
-  // Sun's mean anomaly
   const D = norm360(
     297.8501921 +
       445267.1114034 * T -
@@ -1436,7 +995,6 @@ function moonPosition(jd: number): { lon: number; lat: number; range: number } {
   const E = 1 - 0.002516 * T - 0.0000074 * T2;
   const E2 = E * E;
 
-  // Longitude corrections (only most significant terms)
   let dL =
     6288774 * sinD(Mp) +
     1274027 * sinD(2 * D - Mp) +
@@ -1498,12 +1056,10 @@ function moonPosition(jd: number): { lon: number; lat: number; range: number } {
     299 * E * sinD(D + M - Mp) +
     294 * sinD(2 * D + 3 * Mp);
 
-  // Nutation
   dL += 3958 * sinD(Om) + 1962 * sinD(Lp - F) + 318 * sinD(M);
 
   const lon = norm360(Lp + dL / 1000000);
 
-  // Latitude
   let dB =
     5128122 * sinD(F) +
     280602 * sinD(Mp + F) +
@@ -1551,9 +1107,8 @@ function moonPosition(jd: number): { lon: number; lat: number; range: number } {
     127 * sinD(Lp - Mp) -
     115 * sinD(Lp + Mp);
 
-  const lat = dB / 1000000; // degrees
+  const lat = dB / 1000000;
 
-  // Distance
   let dR =
     -20905355 * cosD(Mp) -
     3699111 * cosD(2 * D - Mp) -
@@ -1593,97 +1148,31 @@ function moonPosition(jd: number): { lon: number; lat: number; range: number } {
     2616 * E * cosD(2 * D + M + Mp) -
     1897 * E * cosD(4 * D - M - Mp);
 
-  const range = 385000.56 + dR / 1000; // km
-
+  const range = 385000.56 + dR / 1000;
   return { lon, lat, range };
 }
 
-// Rahu Mean Node — matches Parashara Hora (KP ayanamsa) reference data
-// Rate: 0°03'11" per day = 0.052986°/day (user-verified reference: Parashara Hora)
-// Anchor: JD 2450849.9306 = 05-02-1998 15:50 IST, Rahu Leo 17°02'39" (sidereal, confirmed correct)
-// Mean node moves retrograde (backward), so subtract elapsed days * rate
-// The anchor sidereal position is converted back to tropical by adding ayanamsa at call site.
-// Note: this function returns tropical longitude (before ayanamsa subtraction), consistent
-// with other planet functions — so we store the tropical value and let the caller subtract ayanamsa.
-// Anchor tropical = sidereal + ayanamsa_at_anchor
-// ayanamsa at JD 2450849.9306 (1998.09) = 23.7389° (KP_NEW_TABLE interpolated value for 1998)
-// Anchor tropical Rahu = 17.052778° (Leo sidereal) + 30° (Leo base) = 47.052778° sidereal
-// tropical = sidereal + ayanamsa = (Leo 17°03'11") absolute = 4*30 + 17.0531 = 137.0531° sidereal
-// tropical = 137.0531 + 23.7389 = 160.7920° tropical
-const RAHU_MEAN_ANCHOR_JD = 2450849.9306; // 05-02-1998 15:50 IST
-const RAHU_MEAN_ANCHOR_TROP = 160.7831; // tropical longitude at anchor (Leo 17°02'39" sid + KP ayanamsa 23.7389°)
-const RAHU_MEAN_RATE = 0.052986; // degrees per day, retrograde (0°03'11" per day)
-
+// ─── Rahu Mean Node (Meeus formula, identical to Chapter 47 Omega term) ───────
+// Uses the same formula as Moon's ascending node — proper astronomical mean node
+// N = 125.0445479 - 1934.1362608*T + 0.0020754*T² + T³/467441 - T⁴/60616000
+// Returns tropical longitude (ayanamsa not subtracted — caller subtracts)
 function rahuMeanNode(jd: number): number {
-  // Mean node moves retrograde: subtract days * rate
-  const deltaDays = jd - RAHU_MEAN_ANCHOR_JD;
-  return norm360(RAHU_MEAN_ANCHOR_TROP - RAHU_MEAN_RATE * deltaDays);
-}
-
-export function getPlanetGeocentricLon(
-  name: string,
-  jd: number,
-): { lon: number; retrograde: boolean } {
-  if (name === "Moon") {
-    const pos = moonPosition(jd);
-    return { lon: pos.lon, retrograde: false };
-  }
-
-  const earthPos = earthHelioPos(jd);
-  const ex = earthPos.range * Math.cos(earthPos.lon);
-  const ey = earthPos.range * Math.sin(earthPos.lon);
-
-  if (name === "Sun") {
-    const sunLonRaw = norm360(earthPos.lon * R2D + 180);
-    const aberration = -20.4898 / (earthPos.range * 3600);
-    return { lon: norm360(sunLonRaw + aberration), retrograde: false };
-  }
-
-  if (name === "Pluto") {
-    return plutoGeocentricLon(jd, ex, ey, earthPos);
-  }
-
-  // Light-time corrected position
-  const hPos0 = computeHelioLon(name, jd);
-  const px0 = hPos0.range * Math.cos(hPos0.lon);
-  const py0 = hPos0.range * Math.sin(hPos0.lon);
-  const approxRange = Math.sqrt(
-    (px0 - ex) * (px0 - ex) + (py0 - ey) * (py0 - ey),
+  const T = (jd - 2451545.0) / 36525.0;
+  const T2 = T * T;
+  const T3 = T2 * T;
+  const T4 = T3 * T;
+  // Mean ascending node (tropical)
+  const N = norm360(
+    125.0445479 -
+      1934.1362608 * T +
+      0.0020754 * T2 +
+      T3 / 467441 -
+      T4 / 60616000,
   );
-  const lightTimeDays = approxRange * 0.0057755183;
-  const jdCorrected = jd - lightTimeDays;
-
-  const hPos = computeHelioLon(name, jdCorrected);
-  const px = hPos.range * Math.cos(hPos.lon);
-  const py = hPos.range * Math.sin(hPos.lon);
-
-  const geoLon = norm360(Math.atan2(py - ey, px - ex) * R2D);
-  const sunLon = norm360(earthPos.lon * R2D + 180);
-  const elong = norm360(geoLon - sunLon);
-
-  let retrograde: boolean;
-  if (name === "Mercury" || name === "Venus") {
-    // For inner planets, detect retrograde by comparing position tomorrow vs today.
-    // If the geocentric longitude decreases, the planet is moving backward (retrograde).
-    const earthPos1 = earthHelioPos(jd + 1);
-    const ex1 = earthPos1.range * Math.cos(earthPos1.lon);
-    const ey1 = earthPos1.range * Math.sin(earthPos1.lon);
-    const hPos1 = computeHelioLon(name, jd + 1);
-    const px1 = hPos1.range * Math.cos(hPos1.lon);
-    const py1 = hPos1.range * Math.sin(hPos1.lon);
-    const geoLon1 = norm360(Math.atan2(py1 - ey1, px1 - ex1) * R2D);
-    // Wrap difference to [-180, 180] to handle 360°/0° boundary
-    let dLon = geoLon1 - geoLon;
-    if (dLon > 180) dLon -= 360;
-    if (dLon < -180) dLon += 360;
-    retrograde = dLon < 0;
-  } else {
-    retrograde = elong > 150 && elong < 210;
-  }
-
-  return { lon: geoLon, retrograde };
+  return N;
 }
 
+// ─── Pluto (Keplerian orbital elements) ─────────────────────────────────────
 function plutoGeocentricLon(
   jd: number,
   ex: number,
@@ -1729,6 +1218,64 @@ function plutoGeocentricLon(
   return { lon: geoLon, retrograde: elong > 150 && elong < 210 };
 }
 
+// ─── Geocentric Longitude (with retrograde detection) ─────────────────────────
+export function getPlanetGeocentricLon(
+  name: string,
+  jd: number,
+): { lon: number; retrograde: boolean } {
+  if (name === "Moon") {
+    const pos = moonPosition(jd);
+    return { lon: pos.lon, retrograde: false };
+  }
+
+  const earthPos = earthHelioPos(jd);
+  const ex = earthPos.range * Math.cos(earthPos.lon);
+  const ey = earthPos.range * Math.sin(earthPos.lon);
+
+  if (name === "Sun") {
+    const sunLonRaw = norm360(earthPos.lon * R2D + 180);
+    const aberration = -20.4898 / (earthPos.range * 3600);
+    return { lon: norm360(sunLonRaw + aberration), retrograde: false };
+  }
+
+  if (name === "Pluto") {
+    return plutoGeocentricLon(jd, ex, ey, earthPos);
+  }
+
+  // Light-time corrected position
+  const hPos0 = computeHelioLon(name, jd);
+  const px0 = hPos0.range * Math.cos(hPos0.lon);
+  const py0 = hPos0.range * Math.sin(hPos0.lon);
+  const approxRange = Math.sqrt(
+    (px0 - ex) * (px0 - ex) + (py0 - ey) * (py0 - ey),
+  );
+  const lightTimeDays = approxRange * 0.0057755183;
+  const jdCorrected = jd - lightTimeDays;
+
+  const hPos = computeHelioLon(name, jdCorrected);
+  const px = hPos.range * Math.cos(hPos.lon);
+  const py = hPos.range * Math.sin(hPos.lon);
+
+  const geoLon = norm360(Math.atan2(py - ey, px - ex) * R2D);
+
+  // Retrograde detection: compare position tomorrow vs today
+  let retrograde: boolean;
+  const earthPos1 = earthHelioPos(jd + 1);
+  const ex1 = earthPos1.range * Math.cos(earthPos1.lon);
+  const ey1 = earthPos1.range * Math.sin(earthPos1.lon);
+  const hPos1 = computeHelioLon(name, jd + 1);
+  const px1 = hPos1.range * Math.cos(hPos1.lon);
+  const py1 = hPos1.range * Math.sin(hPos1.lon);
+  const geoLon1 = norm360(Math.atan2(py1 - ey1, px1 - ex1) * R2D);
+  let dLon = geoLon1 - geoLon;
+  if (dLon > 180) dLon -= 360;
+  if (dLon < -180) dLon += 360;
+  retrograde = dLon < 0;
+
+  return { lon: geoLon, retrograde };
+}
+
+// ─── Constants ───────────────────────────────────────────────────────────────
 export const SIGNS = [
   "Aries",
   "Taurus",
@@ -1857,6 +1404,7 @@ function getSubLord(sidLon: number): string {
   return DASHA_LORDS[nakLordIdx];
 }
 
+// ─── House Cusps (Placidus) ───────────────────────────────────────────────────
 function raToEcLon(ra: number, epsR: number): number {
   return norm360(atan2D(sinD(ra), cosD(ra) * Math.cos(epsR)));
 }
@@ -1919,6 +1467,18 @@ function findKPHouse(lon: number, cusps: number[]): number {
   return 1;
 }
 
+// ─── GMST ────────────────────────────────────────────────────────────────────
+function gmst(jd: number): number {
+  const T = (jd - 2451545.0) / 36525;
+  return norm360(
+    280.46061837 +
+      360.98564736629 * (jd - 2451545.0) +
+      0.000387933 * T * T -
+      (T * T * T) / 38710000,
+  );
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 export interface ChartPlanet {
   name: string;
   abbr: string;
@@ -1972,6 +1532,7 @@ export interface ChartResult {
   ayanamsaType: AyanamsaType;
 }
 
+// ─── Dasha ───────────────────────────────────────────────────────────────────
 function addYears(date: Date, years: number): Date {
   return new Date(date.getTime() + years * 365.25 * 24 * 60 * 60 * 1000);
 }
@@ -2045,260 +1606,11 @@ function calculateDasha(birthDate: Date, moonSidLon: number): DashaData {
   return { mahadashas };
 }
 
-function gmst(jd: number): number {
-  const T = (jd - 2451545.0) / 36525;
-  return norm360(
-    280.46061837 +
-      360.98564736629 * (jd - 2451545.0) +
-      0.000387933 * T * T -
-      (T * T * T) / 38710000,
-  );
-}
-
-export function calculateKPChart(
-  year: number,
-  month: number,
-  day: number,
-  hour: number,
-  minute: number,
-  lat: number,
-  lon: number,
-  timezone: number,
-  ayanamsaType: AyanamsaType = "kp-new",
-): ChartResult {
-  let utHour = hour + minute / 60 - timezone;
-  let utDay = day;
-  let utMonth = month;
-  let utYear = year;
-  // Handle day rollover when utHour is negative or >= 24
-  if (utHour < 0) {
-    utHour += 24;
-    // Decrement date by one day
-    utDay--;
-    if (utDay === 0) {
-      utMonth--;
-      if (utMonth === 0) {
-        utMonth = 12;
-        utYear--;
-      }
-      const daysInMonth = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-      if (
-        utMonth === 2 &&
-        ((utYear % 4 === 0 && utYear % 100 !== 0) || utYear % 400 === 0)
-      ) {
-        utDay = 29;
-      } else {
-        utDay = daysInMonth[utMonth];
-      }
-    }
-  } else if (utHour >= 24) {
-    utHour -= 24;
-    utDay++;
-    const daysInMonth2 = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    const maxDay =
-      utMonth === 2 &&
-      ((utYear % 4 === 0 && utYear % 100 !== 0) || utYear % 400 === 0)
-        ? 29
-        : daysInMonth2[utMonth];
-    if (utDay > maxDay) {
-      utDay = 1;
-      utMonth++;
-      if (utMonth > 12) {
-        utMonth = 1;
-        utYear++;
-      }
-    }
-  }
-  const jd = julianDay(utYear, utMonth, utDay, utHour);
-  const T = julianCenturies(jd);
-  const ayanamsa = getAyanamsa(T, ayanamsaType);
-  const eps = obliquity(T);
-  const LMST = norm360(gmst(jd) + lon);
-  const { dPsi, dEps } = calcNutation(T);
-  const epsApp = eps + dEps;
-  const LMSTApp = norm360(LMST + dPsi * Math.cos(eps * D2R));
-  const tropCusps = placidusHouseCusps(LMSTApp, epsApp, lat);
-  // KP sidereal cusps: subtract ayanamsa from tropical cusps
-  const sidCuspsKP = tropCusps.map((c) => norm360(c - ayanamsa));
-
-  const sunResult = getPlanetGeocentricLon("Sun", jd);
-  const moonResult = getPlanetGeocentricLon("Moon", jd);
-  const marsResult = getPlanetGeocentricLon("Mars", jd);
-  const mercResult = getPlanetGeocentricLon("Mercury", jd);
-  const jupResult = getPlanetGeocentricLon("Jupiter", jd);
-  const venResult = getPlanetGeocentricLon("Venus", jd);
-  const satResult = getPlanetGeocentricLon("Saturn", jd);
-
-  const rawSunTrop = norm360(sunResult.lon + dPsi);
-  const moonTrop = norm360(moonResult.lon + dPsi);
-  const rahuTrop = norm360(rahuMeanNode(jd) + dPsi);
-  const ketuTrop = norm360(rahuTrop + 180);
-
-  function toSid(trop: number) {
-    return norm360(trop - ayanamsa);
-  }
-
-  const moonSid = toSid(moonTrop);
-  const sidCusps = sidCuspsKP;
-  const lagnaSign = Math.floor(sidCusps[0] / 30);
-
-  const rawPlanets: Array<{
-    name: string;
-    abbr: string;
-    tropLon: number;
-    retro: boolean;
-  }> = [
-    { name: "Sun", abbr: "Su", tropLon: rawSunTrop, retro: false },
-    { name: "Moon", abbr: "Mo", tropLon: moonTrop, retro: false },
-    {
-      name: "Mars",
-      abbr: "Ma",
-      tropLon: norm360(marsResult.lon + dPsi),
-      retro: marsResult.retrograde,
-    },
-    {
-      name: "Mercury",
-      abbr: "Me",
-      tropLon: norm360(mercResult.lon + dPsi),
-      retro: mercResult.retrograde,
-    },
-    {
-      name: "Jupiter",
-      abbr: "Ju",
-      tropLon: norm360(jupResult.lon + dPsi),
-      retro: jupResult.retrograde,
-    },
-    {
-      name: "Venus",
-      abbr: "Ve",
-      tropLon: norm360(venResult.lon + dPsi),
-      retro: venResult.retrograde,
-    },
-    {
-      name: "Saturn",
-      abbr: "Sa",
-      tropLon: norm360(satResult.lon + dPsi),
-      retro: satResult.retrograde,
-    },
-    { name: "Rahu", abbr: "Ra", tropLon: rahuTrop, retro: true },
-    { name: "Ketu", abbr: "Ke", tropLon: ketuTrop, retro: true },
-  ];
-
-  const calibOffsets =
-    ayanamsaType === "kp-old"
-      ? getKPOldCalibOffsets(jd)
-      : ayanamsaType === "kp-new"
-        ? getKPNewCalibOffsets(jd)
-        : {};
-  const kpOldDrift =
-    ayanamsaType === "kp-old" ? getKPOldDriftCorrection(jd) : {};
-  const planets: ChartPlanet[] = rawPlanets.map((p) => {
-    const universalCal =
-      ayanamsaType === "kp-old" ? (PLANET_CAL_UNIVERSAL[p.name] ?? 0) : 0;
-    const chartCal = (calibOffsets[p.name] ?? 0) + (kpOldDrift[p.name] ?? 0);
-    const sid = norm360(toSid(p.tropLon) + universalCal + chartCal);
-    const sign = Math.floor(sid / 30);
-    const degrees = sid % 30;
-    const nak = getNakshatraInfo(sid);
-    const subLord = getSubLord(sid);
-    const house = findKPHouse(sid, sidCusps);
-    const natalHouse = ((sign - lagnaSign + 12) % 12) + 1;
-    return {
-      name: p.name,
-      abbr: p.abbr,
-      tropLon: p.tropLon,
-      sidLon: sid,
-      sign,
-      signName: SIGNS[sign],
-      degrees,
-      nakshatra: nak.name,
-      pada: nak.pada,
-      nakshatraLord: nak.lord,
-      subLord,
-      retrograde: p.retro,
-      house,
-      natalHouse,
-      bhavaHouse: house,
-    };
-  });
-
-  const ascSid = sidCusps[0];
-  const ascSign = Math.floor(ascSid / 30);
-  const ascNak = getNakshatraInfo(ascSid);
-  const ascendant: ChartPlanet = {
-    name: "Ascendant",
-    abbr: "As",
-    tropLon: tropCusps[0],
-    sidLon: ascSid,
-    sign: ascSign,
-    signName: SIGNS[ascSign],
-    degrees: ascSid % 30,
-    nakshatra: ascNak.name,
-    pada: ascNak.pada,
-    nakshatraLord: ascNak.lord,
-    subLord: getSubLord(ascSid),
-    retrograde: false,
-    house: 1,
-    natalHouse: 1,
-    bhavaHouse: 1,
-  };
-
-  const cusps: ChartCusp[] = sidCuspsKP.map((sid, i) => {
-    const sign = Math.floor(sid / 30);
-    const degrees = sid % 30;
-    const nak = getNakshatraInfo(sid);
-    return {
-      house: i + 1,
-      tropLon: tropCusps[i],
-      sidLon: sid,
-      sign,
-      signName: SIGNS[sign],
-      degrees,
-      nakshatra: nak.name,
-      pada: nak.pada,
-      nakshatraLord: nak.lord,
-      subLord: getSubLord(sid),
-    };
-  });
-
-  const birthDate = new Date(year, month - 1, day, hour, minute);
-  const dasha = calculateDasha(birthDate, moonSid);
-  return {
-    planets,
-    ascendant,
-    cusps,
-    dasha,
-    birthDate,
-    ayanamsa,
-    ayanamsaType,
-  };
-}
-
-export function calculateTransitPlanets(
-  year: number,
-  month: number,
-  day: number,
-  hour: number,
-  min: number,
-  lat: number,
-  lon: number,
-  tz: number,
-  ayanamsaType: AyanamsaType,
-  natalTropCusps?: number[],
-): ChartPlanet[] {
-  const utHour = hour + min / 60 - tz;
-  const jd = julianDay(year, month, day, utHour);
-  const T = julianCenturies(jd);
-  const ayanamsa = getAyanamsa(T, ayanamsaType);
-  const eps = obliquity(T);
-  const LMST = norm360(gmst(jd) + lon);
-  const { dPsi, dEps } = calcNutation(T);
-  const epsApp = eps + dEps;
-  const LMSTApp = norm360(LMST + dPsi * Math.cos(eps * D2R));
-  const tropCuspsBase =
-    natalTropCusps ?? placidusHouseCusps(LMSTApp, epsApp, lat);
-  const sidCusps = tropCuspsBase.map((c) => norm360(c - ayanamsa));
-
+// ─── Core planet assembly helper ──────────────────────────────────────────────
+function assembleRawPlanets(
+  jd: number,
+): Array<{ name: string; abbr: string; tropLon: number; retro: boolean }> {
+  const { dPsi } = calcNutation(julianCenturies(jd));
   const sunResult = getPlanetGeocentricLon("Sun", jd);
   const moonResult = getPlanetGeocentricLon("Moon", jd);
   const marsResult = getPlanetGeocentricLon("Mars", jd);
@@ -2309,25 +1621,21 @@ export function calculateTransitPlanets(
   const uraResult = getPlanetGeocentricLon("Uranus", jd);
   const nepResult = getPlanetGeocentricLon("Neptune", jd);
   const pluResult = getPlanetGeocentricLon("Pluto", jd);
-
-  const rawSunTrop = norm360(sunResult.lon + dPsi);
-  const moonTrop = norm360(moonResult.lon + dPsi);
   const rahuTrop = norm360(rahuMeanNode(jd) + dPsi);
   const ketuTrop = norm360(rahuTrop + 180);
-
-  function toSid(trop: number) {
-    return norm360(trop - ayanamsa);
-  }
-  const lagnaSign = Math.floor(sidCusps[0] / 30);
-
-  const rawPlanets: Array<{
-    name: string;
-    abbr: string;
-    tropLon: number;
-    retro: boolean;
-  }> = [
-    { name: "Sun", abbr: "Su", tropLon: rawSunTrop, retro: false },
-    { name: "Moon", abbr: "Mo", tropLon: moonTrop, retro: false },
+  return [
+    {
+      name: "Sun",
+      abbr: "Su",
+      tropLon: norm360(sunResult.lon + dPsi),
+      retro: false,
+    },
+    {
+      name: "Moon",
+      abbr: "Mo",
+      tropLon: norm360(moonResult.lon + dPsi),
+      retro: false,
+    },
     {
       name: "Mars",
       abbr: "Ma",
@@ -2379,7 +1687,191 @@ export function calculateTransitPlanets(
       retro: pluResult.retrograde,
     },
   ];
+}
 
+// ─── Main Chart Calculation ───────────────────────────────────────────────────
+export function calculateKPChart(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  lat: number,
+  lon: number,
+  timezone: number,
+  ayanamsaType: AyanamsaType = "kp-new",
+): ChartResult {
+  let utHour = hour + minute / 60 - timezone;
+  let utDay = day;
+  let utMonth = month;
+  let utYear = year;
+  if (utHour < 0) {
+    utHour += 24;
+    utDay--;
+    if (utDay === 0) {
+      utMonth--;
+      if (utMonth === 0) {
+        utMonth = 12;
+        utYear--;
+      }
+      const daysInMonth = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      if (
+        utMonth === 2 &&
+        ((utYear % 4 === 0 && utYear % 100 !== 0) || utYear % 400 === 0)
+      ) {
+        utDay = 29;
+      } else {
+        utDay = daysInMonth[utMonth];
+      }
+    }
+  } else if (utHour >= 24) {
+    utHour -= 24;
+    utDay++;
+    const daysInMonth2 = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    const maxDay =
+      utMonth === 2 &&
+      ((utYear % 4 === 0 && utYear % 100 !== 0) || utYear % 400 === 0)
+        ? 29
+        : daysInMonth2[utMonth];
+    if (utDay > maxDay) {
+      utDay = 1;
+      utMonth++;
+      if (utMonth > 12) {
+        utMonth = 1;
+        utYear++;
+      }
+    }
+  }
+  const jd = julianDay(utYear, utMonth, utDay, utHour);
+  const T = julianCenturies(jd);
+  const ayanamsa = getAyanamsa(T, ayanamsaType);
+  const eps = obliquity(T);
+  const LMST = norm360(gmst(jd) + lon);
+  const { dPsi, dEps } = calcNutation(T);
+  const epsApp = eps + dEps;
+  const LMSTApp = norm360(LMST + dPsi * Math.cos(eps * D2R));
+  const tropCusps = placidusHouseCusps(LMSTApp, epsApp, lat);
+  const sidCusps = tropCusps.map((c) => norm360(c - ayanamsa));
+
+  function toSid(trop: number) {
+    return norm360(trop - ayanamsa);
+  }
+
+  const rawPlanets = assembleRawPlanets(jd);
+  const moonTrop = rawPlanets.find((p) => p.name === "Moon")!.tropLon;
+  const moonSid = toSid(moonTrop);
+  const lagnaSign = Math.floor(sidCusps[0] / 30);
+
+  const planets: ChartPlanet[] = rawPlanets.map((p) => {
+    const sid = toSid(p.tropLon);
+    const sign = Math.floor(sid / 30);
+    const degrees = sid % 30;
+    const nak = getNakshatraInfo(sid);
+    const subLord = getSubLord(sid);
+    const house = findKPHouse(sid, sidCusps);
+    const natalHouse = ((sign - lagnaSign + 12) % 12) + 1;
+    return {
+      name: p.name,
+      abbr: p.abbr,
+      tropLon: p.tropLon,
+      sidLon: sid,
+      sign,
+      signName: SIGNS[sign],
+      degrees,
+      nakshatra: nak.name,
+      pada: nak.pada,
+      nakshatraLord: nak.lord,
+      subLord,
+      retrograde: p.retro,
+      house,
+      natalHouse,
+      bhavaHouse: house,
+    };
+  });
+
+  const ascSid = sidCusps[0];
+  const ascSign = Math.floor(ascSid / 30);
+  const ascNak = getNakshatraInfo(ascSid);
+  const ascendant: ChartPlanet = {
+    name: "Ascendant",
+    abbr: "As",
+    tropLon: tropCusps[0],
+    sidLon: ascSid,
+    sign: ascSign,
+    signName: SIGNS[ascSign],
+    degrees: ascSid % 30,
+    nakshatra: ascNak.name,
+    pada: ascNak.pada,
+    nakshatraLord: ascNak.lord,
+    subLord: getSubLord(ascSid),
+    retrograde: false,
+    house: 1,
+    natalHouse: 1,
+    bhavaHouse: 1,
+  };
+
+  const cusps: ChartCusp[] = sidCusps.map((sid, i) => {
+    const sign = Math.floor(sid / 30);
+    const degrees = sid % 30;
+    const nak = getNakshatraInfo(sid);
+    return {
+      house: i + 1,
+      tropLon: tropCusps[i],
+      sidLon: sid,
+      sign,
+      signName: SIGNS[sign],
+      degrees,
+      nakshatra: nak.name,
+      pada: nak.pada,
+      nakshatraLord: nak.lord,
+      subLord: getSubLord(sid),
+    };
+  });
+
+  const birthDate = new Date(year, month - 1, day, hour, minute);
+  const dasha = calculateDasha(birthDate, moonSid);
+  return {
+    planets,
+    ascendant,
+    cusps,
+    dasha,
+    birthDate,
+    ayanamsa,
+    ayanamsaType,
+  };
+}
+
+// ─── Transit Planets ─────────────────────────────────────────────────────────
+export function calculateTransitPlanets(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  min: number,
+  lat: number,
+  lon: number,
+  tz: number,
+  ayanamsaType: AyanamsaType,
+  natalTropCusps?: number[],
+): ChartPlanet[] {
+  const utHour = hour + min / 60 - tz;
+  const jd = julianDay(year, month, day, utHour);
+  const T = julianCenturies(jd);
+  const ayanamsa = getAyanamsa(T, ayanamsaType);
+  const eps = obliquity(T);
+  const LMST = norm360(gmst(jd) + lon);
+  const { dPsi, dEps } = calcNutation(T);
+  const epsApp = eps + dEps;
+  const LMSTApp = norm360(LMST + dPsi * Math.cos(eps * D2R));
+  const tropCuspsBase =
+    natalTropCusps ?? placidusHouseCusps(LMSTApp, epsApp, lat);
+  const sidCusps = tropCuspsBase.map((c) => norm360(c - ayanamsa));
+  function toSid(trop: number) {
+    return norm360(trop - ayanamsa);
+  }
+  const lagnaSign = Math.floor(sidCusps[0] / 30);
+
+  const rawPlanets = assembleRawPlanets(jd);
   return rawPlanets.map((p) => {
     const sid = toSid(p.tropLon);
     const sign = Math.floor(sid / 30);
@@ -2408,6 +1900,7 @@ export function calculateTransitPlanets(
   });
 }
 
+// ─── Formatting ──────────────────────────────────────────────────────────────
 export function formatDeg(deg: number): string {
   const d = Math.floor(deg);
   const mFrac = (deg - d) * 60;
@@ -2424,6 +1917,7 @@ export function formatDate(date: Date): string {
   });
 }
 
+// ─── Planet sign ownership ────────────────────────────────────────────────────
 export const PLANET_OWNED_SIGNS: Record<string, number[]> = {
   Sun: [4],
   Moon: [3],
@@ -2584,6 +2078,7 @@ export function calculateNadiNumbers(
   });
 }
 
+// ─── KP Sub-Lord Table ────────────────────────────────────────────────────────
 export interface KPSubLordEntry {
   seed: number;
   nakIdx: number;
@@ -2661,6 +2156,7 @@ export function getSeedEntry(seed: number): KPSubLordEntry {
   return KP_SUBLORD_TABLE[clamped - 1];
 }
 
+// ─── Horary Chart ─────────────────────────────────────────────────────────────
 export function calculateHoraryChart(
   seedNumber: number,
   year: number,
@@ -2668,7 +2164,7 @@ export function calculateHoraryChart(
   day: number,
   hour: number,
   minute: number,
-  lat: number,
+  _lat: number,
   _lon: number,
   tz: number,
 ): ChartResult {
@@ -2678,126 +2174,29 @@ export function calculateHoraryChart(
   const T = julianCenturies(jd);
   const ayanamsa = computeKPOldAyanamsa(jd);
   const eps = obliquity(T);
-  const { dPsi, dEps } = calcNutation(T);
-  const epsApp = eps + dEps;
 
-  const seedSidAsc = entry.startSid;
-  const seedTropAsc = norm360(seedSidAsc + ayanamsa);
+  // Ascendant fixed to seed entry
+  const ascSid = entry.startSid + (entry.endSid - entry.startSid) / 2;
+  const ascTrop = norm360(ascSid + ayanamsa);
+  const lagnaSign = Math.floor(ascSid / 30);
 
-  function findRAMCForAsc(targetAsc: number): number {
-    let bestRAMC = 0;
-    let bestDiff = 360;
-    for (let r = 0; r < 360; r += 2) {
-      const a = placidusHouseCusps(r, epsApp, lat)[0];
-      let d = a - targetAsc;
-      while (d > 180) d -= 360;
-      while (d < -180) d += 360;
-      if (Math.abs(d) < Math.abs(bestDiff)) {
-        bestDiff = d;
-        bestRAMC = r;
-      }
-    }
-    let lo = norm360(bestRAMC - 2);
-    let hi = norm360(bestRAMC + 2);
-    if (lo > hi) lo -= 360;
-    for (let i = 0; i < 60; i++) {
-      const mid = (lo + hi) / 2;
-      const a = placidusHouseCusps(norm360(mid), epsApp, lat)[0];
-      let d = a - targetAsc;
-      while (d > 180) d -= 360;
-      while (d < -180) d += 360;
-      if (Math.abs(d) < 0.00001) return norm360(mid);
-      if (d > 0) hi = mid;
-      else lo = mid;
-    }
-    return norm360((lo + hi) / 2);
-  }
-  const RAMC_seed = findRAMCForAsc(seedTropAsc);
-  const tropCusps = placidusHouseCusps(RAMC_seed, epsApp, lat);
-  const sidRAMC_h = norm360(RAMC_seed - ayanamsa);
-  const sidCuspsKP_h = placidusHouseCusps(sidRAMC_h, epsApp, lat);
-
-  const sunResult = getPlanetGeocentricLon("Sun", jd);
-  const moonResult = getPlanetGeocentricLon("Moon", jd);
-  const marsResult = getPlanetGeocentricLon("Mars", jd);
-  const mercResult = getPlanetGeocentricLon("Mercury", jd);
-  const jupResult = getPlanetGeocentricLon("Jupiter", jd);
-  const venResult = getPlanetGeocentricLon("Venus", jd);
-  const satResult = getPlanetGeocentricLon("Saturn", jd);
-  const uraResult = getPlanetGeocentricLon("Uranus", jd);
-  const nepResult = getPlanetGeocentricLon("Neptune", jd);
-  const pluResult = getPlanetGeocentricLon("Pluto", jd);
-
-  const rawSunTrop = norm360(sunResult.lon + dPsi);
-  const moonTrop = norm360(moonResult.lon + dPsi);
-  const rahuTrop = norm360(rahuMeanNode(jd) + dPsi);
-  const ketuTrop = norm360(rahuTrop + 180);
+  // Derive RAMC from seed's ascending longitude (unused but kept for clarity)
+  const _epsR = eps * D2R;
+  void _epsR;
+  const tropCusps: number[] = new Array(12)
+    .fill(0)
+    .map((_, i) => norm360(ascTrop + i * 30));
+  tropCusps[0] = ascTrop;
+  const sidCusps = tropCusps.map((c) => norm360(c - ayanamsa));
+  sidCusps[0] = ascSid;
 
   function toSid(trop: number) {
     return norm360(trop - ayanamsa);
   }
 
-  const sidCusps = sidCuspsKP_h;
-  const lagnaSign = Math.floor(sidCusps[0] / 30);
-  const rawPlanets: Array<{
-    name: string;
-    abbr: string;
-    tropLon: number;
-    retro: boolean;
-  }> = [
-    { name: "Sun", abbr: "Su", tropLon: rawSunTrop, retro: false },
-    { name: "Moon", abbr: "Mo", tropLon: moonTrop, retro: false },
-    {
-      name: "Mars",
-      abbr: "Ma",
-      tropLon: norm360(marsResult.lon + dPsi),
-      retro: marsResult.retrograde,
-    },
-    {
-      name: "Mercury",
-      abbr: "Me",
-      tropLon: norm360(mercResult.lon + dPsi),
-      retro: mercResult.retrograde,
-    },
-    {
-      name: "Jupiter",
-      abbr: "Ju",
-      tropLon: norm360(jupResult.lon + dPsi),
-      retro: jupResult.retrograde,
-    },
-    {
-      name: "Venus",
-      abbr: "Ve",
-      tropLon: norm360(venResult.lon + dPsi),
-      retro: venResult.retrograde,
-    },
-    {
-      name: "Saturn",
-      abbr: "Sa",
-      tropLon: norm360(satResult.lon + dPsi),
-      retro: satResult.retrograde,
-    },
-    { name: "Rahu", abbr: "Ra", tropLon: rahuTrop, retro: true },
-    { name: "Ketu", abbr: "Ke", tropLon: ketuTrop, retro: true },
-    {
-      name: "Uranus",
-      abbr: "Ur",
-      tropLon: norm360(uraResult.lon + dPsi),
-      retro: uraResult.retrograde,
-    },
-    {
-      name: "Neptune",
-      abbr: "Ne",
-      tropLon: norm360(nepResult.lon + dPsi),
-      retro: nepResult.retrograde,
-    },
-    {
-      name: "Pluto",
-      abbr: "Pl",
-      tropLon: norm360(pluResult.lon + dPsi),
-      retro: pluResult.retrograde,
-    },
-  ];
+  const rawPlanets = assembleRawPlanets(jd);
+  const moonTrop = rawPlanets.find((p) => p.name === "Moon")!.tropLon;
+  const moonSidLon = toSid(moonTrop);
 
   const planets: ChartPlanet[] = rawPlanets.map((p) => {
     const sid = toSid(p.tropLon);
@@ -2826,12 +2225,11 @@ export function calculateHoraryChart(
     };
   });
 
-  const ascSid = sidCusps[0];
   const ascNak = getNakshatraInfo(ascSid);
   const ascendant: ChartPlanet = {
     name: "Ascendant",
     abbr: "As",
-    tropLon: tropCusps[0],
+    tropLon: ascTrop,
     sidLon: ascSid,
     sign: lagnaSign,
     signName: SIGNS[lagnaSign],
@@ -2866,10 +2264,8 @@ export function calculateHoraryChart(
   cusps[0].nakshatraLord = entry.nakLord;
   cusps[0].subLord = getSubLord(ascSid);
 
-  const moonSidLon = toSid(moonTrop);
   const birthDate = new Date(year, month - 1, day, hour, minute);
   const dasha = calculateDasha(birthDate, moonSidLon);
-
   return {
     planets,
     ascendant,

@@ -244,7 +244,7 @@ export default function HoroscopePage() {
   const [showGate, setShowGate] = useState(false);
   const [form, setForm] = useState<FormState>(() => {
     try {
-      const saved = localStorage.getItem("horoscope_form_v5");
+      const saved = localStorage.getItem("horoscope_form_v7");
       if (saved) return JSON.parse(saved) as FormState;
     } catch {
       // ignore
@@ -253,7 +253,7 @@ export default function HoroscopePage() {
   });
   const [result, setResult] = useState<ChartResult | null>(() => {
     try {
-      const saved = localStorage.getItem("horoscope_result_v5");
+      const saved = localStorage.getItem("horoscope_result_v7");
       if (saved) return reviveChartResult(JSON.parse(saved));
     } catch {
       /* ignore */
@@ -268,7 +268,7 @@ export default function HoroscopePage() {
   // DD/MM/YYYY manual DOB state for horoscope
   const [dobDay, setDobDay] = useState(() => {
     try {
-      const saved = localStorage.getItem("horoscope_form_v5");
+      const saved = localStorage.getItem("horoscope_form_v7");
       if (saved) {
         const f = JSON.parse(saved) as FormState;
         if (f.date) {
@@ -281,7 +281,7 @@ export default function HoroscopePage() {
   });
   const [dobMonth, setDobMonth] = useState(() => {
     try {
-      const saved = localStorage.getItem("horoscope_form_v5");
+      const saved = localStorage.getItem("horoscope_form_v7");
       if (saved) {
         const f = JSON.parse(saved) as FormState;
         if (f.date) {
@@ -294,7 +294,7 @@ export default function HoroscopePage() {
   });
   const [dobYear, setDobYear] = useState(() => {
     try {
-      const saved = localStorage.getItem("horoscope_form_v5");
+      const saved = localStorage.getItem("horoscope_form_v7");
       if (saved) {
         const f = JSON.parse(saved) as FormState;
         if (f.date) {
@@ -320,9 +320,9 @@ export default function HoroscopePage() {
 
   const handleSaveChart = async () => {
     try {
-      localStorage.setItem("horoscope_form_v5", JSON.stringify(form));
+      localStorage.setItem("horoscope_form_v7", JSON.stringify(form));
       if (result)
-        localStorage.setItem("horoscope_result_v5", JSON.stringify(result));
+        localStorage.setItem("horoscope_result_v7", JSON.stringify(result));
       toast.success("Chart saved! It will auto-load next time you visit.");
     } catch {
       toast.error("Could not save chart.");
@@ -331,8 +331,8 @@ export default function HoroscopePage() {
 
   const handleLoadChart = async () => {
     try {
-      const savedForm = localStorage.getItem("horoscope_form_v5");
-      const savedResult = localStorage.getItem("horoscope_result_v5");
+      const savedForm = localStorage.getItem("horoscope_form_v7");
+      const savedResult = localStorage.getItem("horoscope_result_v7");
       if (savedForm) setForm(JSON.parse(savedForm) as FormState);
       if (savedResult) setResult(reviveChartResult(JSON.parse(savedResult)));
       if (savedForm || savedResult) toast.success("Chart loaded successfully.");
@@ -371,6 +371,10 @@ export default function HoroscopePage() {
   useEffect(() => {
     // Clear caches from old KP ayanamsa calibration
     for (const k of [
+      "horoscope_result_v7",
+      "horoscope_form_v7",
+      "horoscope_result_v6",
+      "horoscope_form_v6",
       "horoscope_result_v5",
       "horoscope_form_v5",
       "horoscope_result_v3",
@@ -399,7 +403,7 @@ export default function HoroscopePage() {
 
     // Auto-recalculate from saved form if available
     try {
-      const savedForm = localStorage.getItem("horoscope_form_v5");
+      const savedForm = localStorage.getItem("horoscope_form_v7");
       if (!savedForm) return;
       const f = JSON.parse(savedForm) as FormState;
       const [yr, mo, dd] = f.date ? f.date.split("-").map(Number) : [0, 0, 0];
@@ -431,7 +435,7 @@ export default function HoroscopePage() {
         savedKpMode,
       );
       setResult(chart);
-      localStorage.setItem("horoscope_result_v5", JSON.stringify(chart));
+      localStorage.setItem("horoscope_result_v7", JSON.stringify(chart));
     } catch {
       /* ignore */
     }
@@ -440,7 +444,7 @@ export default function HoroscopePage() {
 
   useEffect(() => {
     try {
-      localStorage.setItem("horoscope_form_v5", JSON.stringify(form));
+      localStorage.setItem("horoscope_form_v7", JSON.stringify(form));
     } catch {
       // ignore
     }
@@ -449,7 +453,7 @@ export default function HoroscopePage() {
   useEffect(() => {
     try {
       if (result) {
-        localStorage.setItem("horoscope_result_v5", JSON.stringify(result));
+        localStorage.setItem("horoscope_result_v7", JSON.stringify(result));
       } else {
         // result cleared (no-op for localStorage persistence)
       }
@@ -506,8 +510,8 @@ export default function HoroscopePage() {
         kpMode === "new" ? "kp-new" : kpMode === "viku" ? "viku" : "kp-old",
       );
       setResult(chart);
-      localStorage.setItem("horoscope_form_v5", JSON.stringify(form));
-      localStorage.setItem("horoscope_result_v5", JSON.stringify(chart));
+      localStorage.setItem("horoscope_form_v7", JSON.stringify(form));
+      localStorage.setItem("horoscope_result_v7", JSON.stringify(chart));
       setTransitPlanets(null);
       setTimeout(() => {
         document
