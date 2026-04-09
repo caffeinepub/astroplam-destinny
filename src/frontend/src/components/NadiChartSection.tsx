@@ -1,9 +1,6 @@
-import type { NadiChartResult as BackendNadiChartResult } from "@/backend";
-import { createActor } from "@/backend";
-// NadiChartSection — Nadi Chart wired to backend canister (Jean Meeus full-precision)
-// Planet positions come from actor.calculateNadiPlanets()
-// Dasha tree is computed locally from the Moon's sidereal longitude returned by backend
-// Does NOT import calculation logic from kpEngine.ts
+// NadiChartSection — Nadi Chart using @swisseph/browser (WebAssembly Swiss Ephemeris)
+// Planetary calculations run client-side in WASM — no backend call needed for positions
+// Dasha tree is computed locally from Moon's sidereal longitude
 import PlaceAutocomplete from "@/components/PlaceAutocomplete";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,15 +16,16 @@ import {
 import {
   type NadiDashaData,
   type NadiDashaEntry,
-  nadiFormatDeg,
+  nadiFormatDeg as _nadiFormatDeg,
 } from "@/lib/nadiChartEngine";
-import { useActor as _useActor } from "@caffeineai/core-infrastructure";
+import { calculateSwissEphChart } from "@/lib/swissEphEngine";
 import { Loader2, Star } from "lucide-react";
 import { motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
-const useActor = () => _useActor(createActor);
+// suppress unused import warning
+void _nadiFormatDeg;
 
 // ─── Dasha helpers (pure JS, no backend needed) ───────────────────────────────
 const NAK_DEG = 360 / 27;
@@ -144,9 +142,21 @@ function calcDasha(birthDate: Date, moonSidLon: number): NadiDashaData {
 }
 
 // ─── Display result type ──────────────────────────────────────────────────────
+interface PlanetRow {
+  name: string;
+  sign: string;
+  degreeStr: string;
+  nakshatra: string;
+  pada: number;
+  nakLord: string;
+  subLord: string;
+  houseNum: number;
+  isRetrograde: boolean;
+}
+
 interface NadiDisplayResult {
-  planets: BackendNadiChartResult["planets"];
-  ascendant: BackendNadiChartResult["ascendant"];
+  planets: PlanetRow[];
+  ascendant: PlanetRow;
   dasha: NadiDashaData;
   dashaBalance: string;
   inputDate: string;
@@ -391,8 +401,28 @@ const DEFAULT_NADI_FORM: NadiFormState = {
   tz: "5.5",
 };
 
+const SIGN_NAMES = [
+  "Aries",
+  "Taurus",
+  "Gemini",
+  "Cancer",
+  "Leo",
+  "Virgo",
+  "Libra",
+  "Scorpio",
+  "Sagittarius",
+  "Capricorn",
+  "Aquarius",
+  "Pisces",
+];
+function getSignIndex(signName: string): number {
+  const idx = SIGN_NAMES.findIndex(
+    (s) => s.toLowerCase() === signName.toLowerCase(),
+  );
+  return idx >= 0 ? idx : 0;
+}
+
 export default function NadiChartSection() {
-  const { actor } = useActor();
   const [form, setForm] = useState<NadiFormState>(DEFAULT_NADI_FORM);
   const [result, setResult] = useState<NadiDisplayResult | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
@@ -407,29 +437,6 @@ export default function NadiChartSection() {
 
   const updateForm = (field: keyof NadiFormState, val: string) =>
     setForm((prev) => ({ ...prev, [field]: val }));
-
-  // Sync date string from dob fields
-  useEffect(() => {
-    const d = Number.parseInt(dobDay, 10);
-    const m = Number.parseInt(dobMonth, 10);
-    const y = Number.parseInt(dobYear, 10);
-    if (
-      d &&
-      m &&
-      y &&
-      d >= 1 &&
-      d <= 31 &&
-      m >= 1 &&
-      m <= 12 &&
-      y >= 1800 &&
-      y <= 2100
-    ) {
-      setForm((prev) => ({
-        ...prev,
-        date: `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`,
-      }));
-    }
-  }, [dobDay, dobMonth, dobYear]);
 
   const handleCalculate = async () => {
     setError(null);
@@ -459,78 +466,43 @@ export default function NadiChartSection() {
       return;
     }
 
-    if (!actor) {
-      toast.error("Backend not ready. Please wait a moment and try again.");
-      return;
-    }
-
     setIsCalculating(true);
     try {
-      // Backend expects UTC time — convert local time to UTC
-      let utHr = hr + min / 60 - tz;
-      let utDay = d;
-      let utMonth2 = m;
-      let utYear2 = y;
-      if (utHr < 0) {
-        utHr += 24;
-        utDay--;
-        if (utDay === 0) {
-          utMonth2--;
-          if (utMonth2 === 0) {
-            utMonth2 = 12;
-            utYear2--;
-          }
-          const dIM = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-          utDay =
-            utMonth2 === 2 &&
-            ((utYear2 % 4 === 0 && utYear2 % 100 !== 0) || utYear2 % 400 === 0)
-              ? 29
-              : dIM[utMonth2];
-        }
-      } else if (utHr >= 24) {
-        utHr -= 24;
-        utDay++;
-        const dIM2 = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-        const maxDay =
-          utMonth2 === 2 &&
-          ((utYear2 % 4 === 0 && utYear2 % 100 !== 0) || utYear2 % 400 === 0)
-            ? 29
-            : dIM2[utMonth2];
-        if (utDay > maxDay) {
-          utDay = 1;
-          utMonth2++;
-          if (utMonth2 > 12) {
-            utMonth2 = 1;
-            utYear2++;
-          }
-        }
-      }
-      const utcDateStr = `${utYear2}-${String(utMonth2).padStart(2, "0")}-${String(utDay).padStart(2, "0")}`;
-      const utcTimeStr = `${String(Math.floor(utHr)).padStart(2, "0")}:${String(Math.round((utHr % 1) * 60)).padStart(2, "0")}`;
+      // Build date/time strings for swissEphEngine
+      const dateStr = `${String(d).padStart(2, "0")}-${String(m).padStart(2, "0")}-${y}`;
+      const timeStr = `${String(hr).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 
-      const backendResult = await actor.calculateNadiPlanets(
-        utcDateStr,
-        utcTimeStr,
+      const chartData = await calculateSwissEphChart(
+        dateStr,
+        timeStr,
         lat,
         lon,
+        tz,
       );
 
-      if ("err" in backendResult) {
-        throw new Error(backendResult.err);
-      }
-
-      const chartData = backendResult.ok;
-
-      // Build dasha from Moon's sidereal degree (backend provides Moon degree within sign)
+      // Build dasha from Moon's sidereal position
       const moonPlanet = chartData.planets.find((p) => p.name === "Moon");
-      const moonSignIndex = moonPlanet ? getSignIndex(moonPlanet.sign) : 0;
-      const moonSidLon = moonSignIndex * 30 + (moonPlanet?.degree ?? 0);
+      const moonSignIdx = moonPlanet ? getSignIndex(moonPlanet.sign) : 0;
+      const moonSidLon = moonSignIdx * 30 + (moonPlanet?.degree ?? 0);
       const birthDate = new Date(y, m - 1, d, hr, min);
       const dasha = calcDasha(birthDate, moonSidLon);
 
+      // Map to display rows
+      const toRow = (p: (typeof chartData.planets)[0]): PlanetRow => ({
+        name: p.name,
+        sign: p.sign,
+        degreeStr: p.degreeStr,
+        nakshatra: p.nakshatra,
+        pada: Number(p.pada),
+        nakLord: p.nakLord,
+        subLord: p.subLord,
+        houseNum: Number(p.houseNum),
+        isRetrograde: p.isRetrograde,
+      });
+
       setResult({
-        planets: chartData.planets,
-        ascendant: chartData.ascendant,
+        planets: chartData.planets.map(toRow),
+        ascendant: toRow(chartData.ascendant),
         dasha,
         dashaBalance: chartData.dashaBalance,
         inputDate: `${String(d).padStart(2, "0")}-${String(m).padStart(2, "0")}-${y}`,
@@ -566,8 +538,8 @@ export default function NadiChartSection() {
             Nadi Chart — Birth Details
           </h2>
           <p className="text-xs text-muted-foreground">
-            Uses backend canister with Jean Meeus full-precision algorithms
-            (Swiss Ephemeris quality).
+            Uses WebAssembly Swiss Ephemeris (@swisseph/browser) — true
+            JPL-level precision
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -717,14 +689,14 @@ export default function NadiChartSection() {
           <Button
             data-ocid="nadi_calculate.primary_button"
             onClick={handleCalculate}
-            disabled={isCalculating || !actor}
+            disabled={isCalculating}
             className="w-full sm:w-auto text-sm font-semibold"
             style={{ background: "#2E8B57", color: "#ffffff" }}
           >
             {isCalculating ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Calculating… (2–4s)
+                Calculating…
               </>
             ) : (
               <>
@@ -733,13 +705,6 @@ export default function NadiChartSection() {
               </>
             )}
           </Button>
-
-          {!actor && (
-            <p className="text-xs text-amber-600 flex items-center gap-1">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              Connecting to backend canister…
-            </p>
-          )}
         </div>
       </motion.section>
 
@@ -809,7 +774,7 @@ export default function NadiChartSection() {
               <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center gap-2">
                 <Star className="w-4 h-4 text-[#2E8B57]" />
                 <span className="font-semibold text-sm">
-                  Nadi Chart — Planetary Positions
+                  Nadi Chart — Planetary Positions (Swiss Ephemeris)
                 </span>
               </div>
               <div className="overflow-x-auto">
@@ -867,7 +832,7 @@ export default function NadiChartSection() {
                         {result.ascendant.nakshatra}
                       </TableCell>
                       <TableCell className="text-sm whitespace-nowrap">
-                        {Number(result.ascendant.pada)}
+                        {result.ascendant.pada}
                       </TableCell>
                       <TableCell className="text-sm whitespace-nowrap">
                         {result.ascendant.nakLord}
@@ -876,10 +841,10 @@ export default function NadiChartSection() {
                         {result.ascendant.subLord}
                       </TableCell>
                       <TableCell className="text-sm whitespace-nowrap">
-                        {Number(result.ascendant.houseNum)}
+                        {result.ascendant.houseNum}
                       </TableCell>
                       <TableCell className="text-sm whitespace-nowrap">
-                        {Number(result.ascendant.houseNum)}
+                        {result.ascendant.houseNum}
                       </TableCell>
                       <TableCell className="text-sm whitespace-nowrap" />
                     </TableRow>
@@ -902,7 +867,7 @@ export default function NadiChartSection() {
                           {p.nakshatra}
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
-                          {Number(p.pada)}
+                          {p.pada}
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
                           {p.nakLord}
@@ -911,10 +876,10 @@ export default function NadiChartSection() {
                           {p.subLord}
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
-                          {Number(p.houseNum)}
+                          {p.houseNum}
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
-                          {Number(p.houseNum)}
+                          {p.houseNum}
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap font-semibold text-red-600">
                           {p.isRetrograde ? "R" : ""}
@@ -955,26 +920,4 @@ export default function NadiChartSection() {
       )}
     </div>
   );
-}
-
-// ─── Helper: sign name → index ────────────────────────────────────────────────
-const SIGN_NAMES = [
-  "Aries",
-  "Taurus",
-  "Gemini",
-  "Cancer",
-  "Leo",
-  "Virgo",
-  "Libra",
-  "Scorpio",
-  "Sagittarius",
-  "Capricorn",
-  "Aquarius",
-  "Pisces",
-];
-function getSignIndex(signName: string): number {
-  const idx = SIGN_NAMES.findIndex(
-    (s) => s.toLowerCase() === signName.toLowerCase(),
-  );
-  return idx >= 0 ? idx : 0;
 }

@@ -19,6 +19,7 @@ export default defineConfig({
     sourcemap: false,
     minify: false,
   },
+  assetsInclude: ["**/*.wasm"],
   css: {
     postcss: "./postcss.config.js",
   },
