@@ -67,6 +67,25 @@ type Notice =
    message: text;
    title: text;
  };
+type NadiPlanetInfo = 
+ record {
+   degree: float64;
+   degreeStr: text;
+   houseNum: nat;
+   isRetrograde: bool;
+   nakLord: text;
+   nakshatra: text;
+   name: text;
+   pada: nat;
+   sign: text;
+   subLord: text;
+ };
+type NadiChartResult = 
+ record {
+   ascendant: NadiPlanetInfo;
+   dashaBalance: text;
+   planets: vec NadiPlanetInfo;
+ };
 type Inquiry = 
  record {
    authorId: opt principal;
@@ -131,6 +150,11 @@ service : {
   adminUpdatePost: (adminEmail: text, adminPassword: text, id: text, title:
    text, content: text, author: text) -> ();
   assignCallerUserRole: (user: principal, role: UserRole) -> ();
+  calculateNadiPlanets: (dateStr: text, timeStr: text, lat: float64, lon:
+   float64) -> (variant {
+                  err: text;
+                  ok: NadiChartResult;
+                });
   createPost: (title: text, content: text, author: text) -> (text);
   deleteInquiry: (id: text) -> ();
   deletePost: (id: text) -> ();

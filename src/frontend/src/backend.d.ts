@@ -28,6 +28,23 @@ export interface Service {
     name: string;
     price: bigint;
 }
+export interface NadiPlanetInfo {
+    subLord: string;
+    isRetrograde: boolean;
+    name: string;
+    pada: bigint;
+    sign: string;
+    degree: number;
+    nakLord: string;
+    houseNum: bigint;
+    degreeStr: string;
+    nakshatra: string;
+}
+export interface NadiChartResult {
+    dashaBalance: string;
+    planets: Array<NadiPlanetInfo>;
+    ascendant: NadiPlanetInfo;
+}
 export interface Notice {
     id: string;
     title: string;
@@ -103,6 +120,13 @@ export interface backendInterface {
     adminToggleNotice(adminEmail: string, adminPassword: string, id: string): Promise<void>;
     adminUpdatePost(adminEmail: string, adminPassword: string, id: string, title: string, content: string, author: string): Promise<void>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
+    calculateNadiPlanets(dateStr: string, timeStr: string, lat: number, lon: number): Promise<{
+        __kind__: "ok";
+        ok: NadiChartResult;
+    } | {
+        __kind__: "err";
+        err: string;
+    }>;
     createPost(title: string, content: string, author: string): Promise<string>;
     deleteInquiry(id: string): Promise<void>;
     deletePost(id: string): Promise<void>;

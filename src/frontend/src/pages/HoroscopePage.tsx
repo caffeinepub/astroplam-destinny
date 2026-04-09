@@ -1,5 +1,6 @@
 import DashaSection from "@/components/DashaSection";
 import EventAnalysis from "@/components/EventAnalysis";
+import NadiChartSection from "@/components/NadiChartSection";
 import NadiNumbers from "@/components/NadiNumbers";
 import NorthIndianChart from "@/components/NorthIndianChart";
 import PlaceAutocomplete from "@/components/PlaceAutocomplete";
@@ -1064,6 +1065,13 @@ export default function HoroscopePage() {
             >
               घटनाएं / Events
             </TabsTrigger>
+            <TabsTrigger
+              data-ocid="nadi_chart.tab"
+              value="nadi-chart"
+              className="shrink-0 whitespace-nowrap"
+            >
+              Nadi Chart
+            </TabsTrigger>
           </TabsList>
 
           {/* ====== TAB 1: HOROSCOPE ====== */}
@@ -2009,6 +2017,10 @@ export default function HoroscopePage() {
                 </p>
               </div>
             )}
+          </TabsContent>
+          {/* ====== TAB 5: NADI CHART ====== */}
+          <TabsContent value="nadi-chart" className="space-y-4">
+            <NadiChartSection />
           </TabsContent>
         </Tabs>
       </main>

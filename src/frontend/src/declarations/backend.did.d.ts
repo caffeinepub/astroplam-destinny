@@ -37,6 +37,23 @@ export interface Inquiry {
   'serviceId' : bigint,
   'relationshipPerson2' : [] | [Person],
 }
+export interface NadiChartResult {
+  'dashaBalance' : string,
+  'planets' : Array<NadiPlanetInfo>,
+  'ascendant' : NadiPlanetInfo,
+}
+export interface NadiPlanetInfo {
+  'subLord' : string,
+  'isRetrograde' : boolean,
+  'name' : string,
+  'pada' : bigint,
+  'sign' : string,
+  'degree' : number,
+  'nakLord' : string,
+  'houseNum' : bigint,
+  'degreeStr' : string,
+  'nakshatra' : string,
+}
 export interface Notice {
   'id' : string,
   'title' : string,
@@ -133,6 +150,11 @@ export interface _SERVICE {
     undefined
   >,
   'assignCallerUserRole' : ActorMethod<[Principal, UserRole], undefined>,
+  'calculateNadiPlanets' : ActorMethod<
+    [string, string, number, number],
+    { 'ok' : NadiChartResult } |
+      { 'err' : string }
+  >,
   'createPost' : ActorMethod<[string, string, string], string>,
   'deleteInquiry' : ActorMethod<[string], undefined>,
   'deletePost' : ActorMethod<[string], undefined>,

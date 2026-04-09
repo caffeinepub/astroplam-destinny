@@ -54,6 +54,23 @@ export const UserRole = IDL.Variant({
   'user' : IDL.Null,
   'guest' : IDL.Null,
 });
+export const NadiPlanetInfo = IDL.Record({
+  'subLord' : IDL.Text,
+  'isRetrograde' : IDL.Bool,
+  'name' : IDL.Text,
+  'pada' : IDL.Nat,
+  'sign' : IDL.Text,
+  'degree' : IDL.Float64,
+  'nakLord' : IDL.Text,
+  'houseNum' : IDL.Nat,
+  'degreeStr' : IDL.Text,
+  'nakshatra' : IDL.Text,
+});
+export const NadiChartResult = IDL.Record({
+  'dashaBalance' : IDL.Text,
+  'planets' : IDL.Vec(NadiPlanetInfo),
+  'ascendant' : NadiPlanetInfo,
+});
 export const ExternalBlob = IDL.Vec(IDL.Nat8);
 export const Person = IDL.Record({
   'dob' : IDL.Opt(IDL.Text),
@@ -169,6 +186,11 @@ export const idlService = IDL.Service({
       [],
     ),
   'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
+  'calculateNadiPlanets' : IDL.Func(
+      [IDL.Text, IDL.Text, IDL.Float64, IDL.Float64],
+      [IDL.Variant({ 'ok' : NadiChartResult, 'err' : IDL.Text })],
+      [],
+    ),
   'createPost' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [IDL.Text], []),
   'deleteInquiry' : IDL.Func([IDL.Text], [], []),
   'deletePost' : IDL.Func([IDL.Text], [], []),
@@ -305,6 +327,23 @@ export const idlFactory = ({ IDL }) => {
     'user' : IDL.Null,
     'guest' : IDL.Null,
   });
+  const NadiPlanetInfo = IDL.Record({
+    'subLord' : IDL.Text,
+    'isRetrograde' : IDL.Bool,
+    'name' : IDL.Text,
+    'pada' : IDL.Nat,
+    'sign' : IDL.Text,
+    'degree' : IDL.Float64,
+    'nakLord' : IDL.Text,
+    'houseNum' : IDL.Nat,
+    'degreeStr' : IDL.Text,
+    'nakshatra' : IDL.Text,
+  });
+  const NadiChartResult = IDL.Record({
+    'dashaBalance' : IDL.Text,
+    'planets' : IDL.Vec(NadiPlanetInfo),
+    'ascendant' : NadiPlanetInfo,
+  });
   const ExternalBlob = IDL.Vec(IDL.Nat8);
   const Person = IDL.Record({
     'dob' : IDL.Opt(IDL.Text),
@@ -420,6 +459,11 @@ export const idlFactory = ({ IDL }) => {
         [],
       ),
     'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
+    'calculateNadiPlanets' : IDL.Func(
+        [IDL.Text, IDL.Text, IDL.Float64, IDL.Float64],
+        [IDL.Variant({ 'ok' : NadiChartResult, 'err' : IDL.Text })],
+        [],
+      ),
     'createPost' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [IDL.Text], []),
     'deleteInquiry' : IDL.Func([IDL.Text], [], []),
     'deletePost' : IDL.Func([IDL.Text], [], []),

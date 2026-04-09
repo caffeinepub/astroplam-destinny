@@ -97,11 +97,15 @@ actor {
       var root : Node__46230540<Text, BlogPost__543622485>;
       var size : Nat__490723111
     };
+  stable dashaOrder : [Text];
+  stable dashaYears : [(Text, Float)];
   stable inquiries :
     {
       var root : Node__46230540<Text, Inquiry__931573009>;
       var size : Nat__490723111
     };
+  stable nakshatraLords : [Text];
+  stable nakshatraNames : [Text];
   stable var nextBlogPostId : Nat;
   stable var nextInquiryId : Nat;
   stable var nextNoticeId : Nat;
@@ -119,6 +123,7 @@ actor {
   stable predefinedServices : [{id : Nat; name : Text; price : Nat}];
   stable serviceAccess :
     {var root : Node__46230540<Text, Bool>; var size : Nat__490723111};
+  stable signNames : [Text];
   stable userProfiles :
     {
       var root : Node__46230540<Principal, UserProfile__491224006>;
