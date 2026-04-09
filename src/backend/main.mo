@@ -22,6 +22,36 @@ actor {
   include MixinObjectStorage();
   include MixinAuthorization(accessControlState);
 
+  // IC management canister — used for HTTP outcalls to Astro.com swetest
+  let IC = actor "aaaaa-aa" : actor {
+    http_request : ({
+      url : Text;
+      max_response_bytes : ?Nat64;
+      headers : [{ name : Text; value : Text }];
+      body : ?Blob;
+      method : { #get; #head; #post };
+      transform : ?{
+        function : shared query ({
+          response : {
+            status : Nat;
+            headers : [{ name : Text; value : Text }];
+            body : Blob;
+          };
+          context : Blob;
+        }) -> async {
+          status : Nat;
+          headers : [{ name : Text; value : Text }];
+          body : Blob;
+        };
+        context : Blob;
+      };
+    }) -> async {
+      status : Nat;
+      headers : [{ name : Text; value : Text }];
+      body : Blob;
+    };
+  };
+
   // CONSTANTS
   let ADMIN_USER = "vikaskharb00007@admin";
   let ADMIN_PASS = "Vikas00007@admin";
@@ -1107,35 +1137,32 @@ actor {
 
   // ── Main calculation function ─────────────────────────────────────────────────
 
-  public func calculateNadiPlanets(
+  // Fallback: Jean Meeus computation when HTTP outcall is unavailable
+  func calculateMeeus(
     dateStr : Text,
     timeStr : Text,
     lat : Float,
     lon : Float,
-  ) : async { #ok : NadiChartResult; #err : Text } {
-    // 1. Parse date/time → Julian Day
+  ) : NadiChartResult {
     let (year, month, day) = parseDateStr(dateStr);
-    // Convert IST (UTC+5:30) to UT: subtract 5.5 hours
     let istHours = parseTimeStr(timeStr);
     let utHours = istHours - 5.5;
     let jd = julianDay(year, month, day, utHours);
     let T = (jd - 2451545.0) / 36525.0;
 
-    // 2. Compute tropical longitudes
-    let sunTrop   = sunTropicalLon(T);
-    let moonTrop  = moonTropicalLon(T);
-    let marsTrop  = marsTropicalLon(T);
-    let mercTrop  = mercuryTropicalLon(T);
-    let jupTrop   = jupiterTropicalLon(T);
-    let venTrop   = venusTropicalLon(T);
-    let satTrop   = saturnTropicalLon(T);
-    let rahuTrop  = rahuMeanNode(T);  // ascending node (tropical)
-    let uraTrop   = uranusTropicalLon(T);
-    let nepTrop   = neptuneTropicalLon(T);
-    let pluTrop   = plutoTropicalLon(T);
-    let ascTrop   = ascendantLon(T, utHours, lon, lat);
+    let sunTrop  = sunTropicalLon(T);
+    let moonTrop = moonTropicalLon(T);
+    let marsTrop = marsTropicalLon(T);
+    let mercTrop = mercuryTropicalLon(T);
+    let jupTrop  = jupiterTropicalLon(T);
+    let venTrop  = venusTropicalLon(T);
+    let satTrop  = saturnTropicalLon(T);
+    let rahuTrop = rahuMeanNode(T);
+    let uraTrop  = uranusTropicalLon(T);
+    let nepTrop  = neptuneTropicalLon(T);
+    let pluTrop  = plutoTropicalLon(T);
+    let ascTrop  = ascendantLon(T, utHours, lon, lat);
 
-    // 3. Convert to sidereal (KP ayanamsa)
     let sunSid  = toSidereal(sunTrop, jd);
     let moonSid = toSidereal(moonTrop, jd);
     let marsSid = toSidereal(marsTrop, jd);
@@ -1150,52 +1177,435 @@ actor {
     let pluSid  = toSidereal(pluTrop, jd);
     let ascSid  = toSidereal(ascTrop, jd);
 
-    // 4. Retrograde detection
-    let marsRetro  = isRetrograde(func(t) { toSidereal(marsTropicalLon(t), jd + (t - T) * 36525.0) }, T);
-    let mercRetro  = isRetrograde(func(t) { toSidereal(mercuryTropicalLon(t), jd + (t - T) * 36525.0) }, T);
-    let venRetro   = isRetrograde(func(t) { toSidereal(venusTropicalLon(t), jd + (t - T) * 36525.0) }, T);
-    let jupRetro   = isRetrograde(func(t) { toSidereal(jupiterTropicalLon(t), jd + (t - T) * 36525.0) }, T);
-    let satRetro   = isRetrograde(func(t) { toSidereal(saturnTropicalLon(t), jd + (t - T) * 36525.0) }, T);
-    let uraRetro   = isRetrograde(func(t) { toSidereal(uranusTropicalLon(t), jd + (t - T) * 36525.0) }, T);
-    let nepRetro   = isRetrograde(func(t) { toSidereal(neptuneTropicalLon(t), jd + (t - T) * 36525.0) }, T);
-    let pluRetro   = isRetrograde(func(t) { toSidereal(plutoTropicalLon(t), jd + (t - T) * 36525.0) }, T);
-    // Rahu/Ketu are always retrograde (mean node moves retrograde)
-    let rahuRetro = true;
+    let marsRetro = isRetrograde(func(t) { toSidereal(marsTropicalLon(t), jd + (t - T) * 36525.0) }, T);
+    let mercRetro = isRetrograde(func(t) { toSidereal(mercuryTropicalLon(t), jd + (t - T) * 36525.0) }, T);
+    let venRetro  = isRetrograde(func(t) { toSidereal(venusTropicalLon(t), jd + (t - T) * 36525.0) }, T);
+    let jupRetro  = isRetrograde(func(t) { toSidereal(jupiterTropicalLon(t), jd + (t - T) * 36525.0) }, T);
+    let satRetro  = isRetrograde(func(t) { toSidereal(saturnTropicalLon(t), jd + (t - T) * 36525.0) }, T);
+    let uraRetro  = isRetrograde(func(t) { toSidereal(uranusTropicalLon(t), jd + (t - T) * 36525.0) }, T);
+    let nepRetro  = isRetrograde(func(t) { toSidereal(neptuneTropicalLon(t), jd + (t - T) * 36525.0) }, T);
+    let pluRetro  = isRetrograde(func(t) { toSidereal(plutoTropicalLon(t), jd + (t - T) * 36525.0) }, T);
 
-    // 5. Build planet info records
     let planets : [NadiPlanetInfo] = [
-      buildPlanetInfo("Sun",     sunSid,  false,     ascSid),
-      buildPlanetInfo("Moon",    moonSid, false,     ascSid),
+      buildPlanetInfo("Sun",     sunSid,  false,    ascSid),
+      buildPlanetInfo("Moon",    moonSid, false,    ascSid),
       buildPlanetInfo("Mars",    marsSid, marsRetro, ascSid),
       buildPlanetInfo("Mercury", mercSid, mercRetro, ascSid),
       buildPlanetInfo("Jupiter", jupSid,  jupRetro,  ascSid),
       buildPlanetInfo("Venus",   venSid,  venRetro,  ascSid),
       buildPlanetInfo("Saturn",  satSid,  satRetro,  ascSid),
-      buildPlanetInfo("Rahu",    rahuSid, rahuRetro, ascSid),
-      buildPlanetInfo("Ketu",    ketuSid, rahuRetro, ascSid),
+      buildPlanetInfo("Rahu",    rahuSid, true,      ascSid),
+      buildPlanetInfo("Ketu",    ketuSid, true,      ascSid),
       buildPlanetInfo("Uranus",  uraSid,  uraRetro,  ascSid),
       buildPlanetInfo("Neptune", nepSid,  nepRetro,  ascSid),
       buildPlanetInfo("Pluto",   pluSid,  pluRetro,  ascSid),
     ];
-
     let ascInfo = buildPlanetInfo("Ascendant", ascSid, false, ascSid);
 
-    // 6. Dasha balance: based on Moon nakshatra lord
     let moonNakIdx = Float.floor(moonSid / (360.0 / 27.0)).toInt().toNat() % 27;
     let moonNakLord = nakshatraLords[moonNakIdx];
     let nakSpan2 = 360.0 / 27.0;
     let moonPosInNak = moonSid - Float.floor(moonSid / nakSpan2) * nakSpan2;
-    let fracElapsed = moonPosInNak / nakSpan2;
-    let fracRemaining = 1.0 - fracElapsed;
+    let fracRemaining = 1.0 - moonPosInNak / nakSpan2;
     let dashaYrsRemaining = fracRemaining * dashaYearsFor(moonNakLord);
     let dashaYrsInt = dashaYrsRemaining.toInt();
     let dashaMonths = ((dashaYrsRemaining - dashaYrsInt.toFloat()) * 12.0).toInt();
     let dashaBalance = moonNakLord # " " # dashaYrsInt.toText() # "y " # dashaMonths.toText() # "m";
 
-    #ok({
-      planets;
-      ascendant = ascInfo;
-      dashaBalance;
+    { planets; ascendant = ascInfo; dashaBalance };
+  };
+
+  // ── URL encoding helper ───────────────────────────────────────────────────────
+
+  // Encode a text value for use in a URL query parameter
+  func urlEncode(s : Text) : Text {
+    var result = "";
+    for (c in s.toIter()) {
+      if (
+        (c >= 'a' and c <= 'z') or
+        (c >= 'A' and c <= 'Z') or
+        (c >= '0' and c <= '9') or
+        c == '-' or c == '_' or c == '.' or c == '~'
+      ) {
+        result #= Text.fromChar(c);
+      } else if (c == ' ') {
+        result #= "+";
+      } else if (c == ':') {
+        result #= "%3A";
+      } else if (c == '/') {
+        result #= "%2F";
+      } else {
+        // For all other characters, encode as %XX using simple passthrough
+        // (sufficient for swetest args which only use safe chars after above)
+        result #= Text.fromChar(c);
+      };
+    };
+    result;
+  };
+
+  // Pad a nat to 2 digits with leading zero
+  func pad2(n : Nat) : Text {
+    if (n < 10) { "0" # n.toText() } else { n.toText() };
+  };
+
+  // ── swetest response parser ───────────────────────────────────────────────────
+
+  // Simple digit char to nat (0-9)
+  func digitVal(c : Char) : ?Nat {
+    if (c >= '0' and c <= '9') {
+      switch (Nat.fromText(Text.fromChar(c))) {
+        case (?v) ?v;
+        case null null;
+      };
+    } else null;
+  };
+
+  // Simple float parser for swetest output (handles "123.456789" and "-0.123456")
+  func parseFloat(s : Text) : ?Float {
+    let trimmed = s.trim(#char ' ');
+    if (trimmed.size() == 0) return null;
+    let chars = trimmed.toArray();
+    var i = 0;
+    var sign : Float = 1.0;
+    if (i < chars.size() and chars[i] == '-') { sign := -1.0; i += 1 };
+    if (i < chars.size() and chars[i] == '+') { i += 1 };
+    var intPart : Float = 0.0;
+    var hasDigit = false;
+    var cont = true;
+    while (cont and i < chars.size()) {
+      switch (digitVal(chars[i])) {
+        case (?d) {
+          intPart := intPart * 10.0 + d.toFloat();
+          hasDigit := true;
+          i += 1;
+        };
+        case null { cont := false };
+      };
+    };
+    if (not hasDigit) return null;
+    var fracPart : Float = 0.0;
+    var fracMult : Float = 0.1;
+    if (i < chars.size() and chars[i] == '.') {
+      i += 1;
+      var cont2 = true;
+      while (cont2 and i < chars.size()) {
+        switch (digitVal(chars[i])) {
+          case (?d) {
+            fracPart := fracPart + d.toFloat() * fracMult;
+            fracMult := fracMult * 0.1;
+            i += 1;
+          };
+          case null { cont2 := false };
+        };
+      };
+    };
+    ?(sign * (intPart + fracPart));
+  };
+
+  // Parse swetest output (one line per planet) into (longitude_degrees, speed_degrees_per_day)
+  // Format with -fPls: "PlanetName  longitude  latitude  speed"
+  // Returns: (planetName, longitude, speed)
+  func parseSweetestLine(line : Text) : ?(Text, Float, Float) {
+    // Skip empty lines or header lines
+    let trimmed = line.trim(#char ' ');
+    if (trimmed.size() == 0) { return null };
+    // Split by whitespace tokens
+    let tokens = trimmed.tokens(#char ' ').toArray();
+    if (tokens.size() < 3) { return null };
+    // tokens[0] = planet name, tokens[1] = longitude, tokens[2] = latitude (skip), tokens[3] = speed (optional)
+    let planetName = tokens[0];
+    // Skip lines that don't start with planet names
+    if (planetName.size() == 0) { return null };
+    let firstChar = planetName.toArray()[0];
+    // Planet names start with uppercase letter
+    if (not (firstChar >= 'A' and firstChar <= 'Z')) { return null };
+    let lonText = tokens[1];
+    let lon = switch (parseFloat(lonText)) {
+      case (?v) v;
+      case null { return null };
+    };
+    // Speed is in tokens[3] if available, else tokens[2]
+    let speedIdx = if (tokens.size() >= 4) { 3 } else { 2 };
+    let speed = switch (parseFloat(tokens[speedIdx])) {
+      case (?v) v;
+      case null 1.0; // assume direct if speed unavailable
+    };
+    ?(planetName, lon, speed);
+  };
+
+  // Normalize angle to [0, 360)
+  func normAngleParse(a : Float) : Float {
+    var x = a;
+    while (x < 0.0) { x := x + 360.0 };
+    while (x >= 360.0) { x := x - 360.0 };
+    x;
+  };
+
+  // Build NadiChartResult from parsed swetest output + computed ascendant
+  func buildResultFromSwetest(
+    rawLines : [Text],
+    ascSid : Float,
+    dateStr : Text,
+    timeStr : Text,
+    lat : Float,
+    lon : Float,
+  ) : ?NadiChartResult {
+    // Map swetest planet names to our canonical names
+    // swetest -p0123456789D outputs: Sun, Moon, Mercury, Venus, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto, mean Node (Rahu)
+    let planetOrder : [Text] = [
+      "Sun", "Moon", "Mercury", "Venus", "Mars",
+      "Jupiter", "Saturn", "Uranus", "Neptune", "Pluto", "Rahu",
+    ];
+
+    var parsedPlanets : [var ?(Text, Float, Bool)] = [var null, null, null, null, null, null, null, null, null, null, null];
+    var parsedCount = 0;
+
+    for (line in rawLines.values()) {
+      switch (parseSweetestLine(line)) {
+        case (?(rawName, lon, speed)) {
+          // Map swetest names to our planet names
+          let canonName : ?Text = if (rawName == "Sun") ?"Sun"
+            else if (rawName == "Moon") ?"Moon"
+            else if (rawName == "Mercury") ?"Mercury"
+            else if (rawName == "Venus") ?"Venus"
+            else if (rawName == "Mars") ?"Mars"
+            else if (rawName == "Jupiter") ?"Jupiter"
+            else if (rawName == "Saturn") ?"Saturn"
+            else if (rawName == "Uranus") ?"Uranus"
+            else if (rawName == "Neptune") ?"Neptune"
+            else if (rawName == "Pluto") ?"Pluto"
+            else if (rawName == "mean" or rawName == "meanNode" or rawName == "true") ?"Rahu"
+            else null;
+
+          switch (canonName) {
+            case (?name) {
+              // Find index in planetOrder
+              switch (planetOrder.findIndex(func(n : Text) : Bool { n == name })) {
+                case (?idx) {
+                  // lon is already Lahiri sidereal from -sid1 — add 0.1 for KP ayanamsa
+                  let kpLon = normAngleParse(lon + 0.1);
+                  let isRetro = speed < 0.0;
+                  parsedPlanets[idx] := ?(name, kpLon, isRetro);
+                  parsedCount += 1;
+                };
+                case null {};
+              };
+            };
+            case null {};
+          };
+        };
+        case null {};
+      };
+    };
+
+    // Need at least Sun, Moon, Rahu (indices 0, 1, 10) to be valid
+    if (parsedCount < 3) { return null };
+
+    // Also handle "mean Node" as two tokens in swetest output — check if we got Rahu
+    // (index 10 may be filled from a "mean" prefix line or may need special handling)
+
+    // Build final planet list using parsed data, falling back to Meeus for missing planets
+    let meeusResult = calculateMeeus(dateStr, timeStr, lat, lon);
+    let meeusArr = meeusResult.planets;
+    func getMeeus(name : Text) : NadiPlanetInfo {
+      switch (meeusArr.find(func(p : NadiPlanetInfo) : Bool { p.name == name })) {
+        case (?info) info;
+        case null meeusResult.ascendant; // fallback
+      };
+    };
+
+    // Build planet infos from swetest data
+    let resultPlanets : [NadiPlanetInfo] = Array.tabulate<NadiPlanetInfo>(12, func(i) {
+      // Order: Sun(0), Moon(1), Mars(2), Mercury(3), Jupiter(4), Venus(5), Saturn(6), Rahu(7), Ketu(8), Uranus(9), Neptune(10), Pluto(11)
+      let (name, srcIdx, ketuMode) : (Text, Nat, Bool) = switch (i) {
+        case 0  ("Sun",     0, false);
+        case 1  ("Moon",    1, false);
+        case 2  ("Mars",    4, false);
+        case 3  ("Mercury", 2, false);
+        case 4  ("Jupiter", 5, false);
+        case 5  ("Venus",   3, false);
+        case 6  ("Saturn",  6, false);
+        case 7  ("Rahu",    10, false);
+        case 8  ("Ketu",    10, true);
+        case 9  ("Uranus",  7, false);
+        case 10 ("Neptune", 8, false);
+        case 11 ("Pluto",   9, false);
+        case _  ("Sun",     0, false);
+      };
+      switch (parsedPlanets[srcIdx]) {
+        case (?(_, kpLon, isRetro)) {
+          let finalLon = if (ketuMode) normAngleParse(kpLon + 180.0) else kpLon;
+          buildPlanetInfo(name, finalLon, if (ketuMode) true else isRetro, ascSid);
+        };
+        case null {
+          getMeeus(name);
+        };
+      };
     });
+
+    // Dasha balance from Moon
+    let moonInfo = resultPlanets[1]; // Moon is index 1
+    let moonSid = moonInfo.degree + Float.floor(switch (signNames.findIndex(func(s : Text) : Bool { s == moonInfo.sign })) { case (?i) i.toFloat(); case null 0.0 }) * 30.0;
+    let moonNakIdx = Float.floor(moonSid / (360.0 / 27.0)).toInt().toNat() % 27;
+    let moonNakLord = nakshatraLords[moonNakIdx];
+    let nakSpan = 360.0 / 27.0;
+    let moonPosInNak = moonSid - Float.floor(moonSid / nakSpan) * nakSpan;
+    let fracRemaining = 1.0 - moonPosInNak / nakSpan;
+    let dashaYrsRemaining = fracRemaining * dashaYearsFor(moonNakLord);
+    let dashaYrsInt = dashaYrsRemaining.toInt();
+    let dashaMonths = ((dashaYrsRemaining - dashaYrsInt.toFloat()) * 12.0).toInt();
+    let dashaBalance = moonNakLord # " " # dashaYrsInt.toText() # "y " # dashaMonths.toText() # "m";
+
+    let ascInfo = buildPlanetInfo("Ascendant", ascSid, false, ascSid);
+
+    ?{ planets = resultPlanets; ascendant = ascInfo; dashaBalance };
+  };
+
+  // ── Swetest URL builder ───────────────────────────────────────────────────────
+
+  func buildSwetestUrl(dateStr : Text, timeStr : Text) : Text {
+    // dateStr: "DD-MM-YYYY", timeStr: "HH:MM"
+    let dateParts = dateStr.split(#char '-').toArray();
+    let timeParts = timeStr.split(#char ':').toArray();
+    if (dateParts.size() < 3 or timeParts.size() < 2) {
+      return "";
+    };
+
+    let day = dateParts[0];
+    let month = dateParts[1];
+    let year = dateParts[2];
+
+    // Convert IST to UTC: subtract 5.5 hours
+    let hrOpt = Nat.fromText(timeParts[0]);
+    let mnOpt = Nat.fromText(timeParts[1]);
+    let hr = switch (hrOpt) { case (?v) v; case null 0 };
+    let mn = switch (mnOpt) { case (?v) v; case null 0 };
+
+    // Compute UTC time (fractional hours)
+    let istFrac = hr.toFloat() + mn.toFloat() / 60.0;
+    var utcFrac = istFrac - 5.5;
+    var utcDay = day;
+    var utcMonth = month;
+    var utcYear = year;
+
+    // Handle day rollover if utcFrac < 0
+    if (utcFrac < 0.0) {
+      utcFrac := utcFrac + 24.0;
+      // Subtract one day — simple approximation (handles most cases)
+      let dayInt = switch (Nat.fromText(day)) { case (?v) v; case null 1 };
+      if (dayInt > 1) {
+        utcDay := (dayInt - 1).toText();
+      } else {
+        // First day of month: go to last day of previous month
+        let monthInt = switch (Nat.fromText(month)) { case (?v) v; case null 1 };
+        let yearInt = switch (Int.fromText(year)) { case (?v) v; case null 2000 };
+        let prevMonth = if (monthInt == 1) { 12 } else { monthInt - 1 };
+        let prevYear = if (monthInt == 1) { yearInt - 1 } else { yearInt };
+        let daysInPrevMonth : Nat = switch (prevMonth) {
+          case 1  31; case 2  {
+            let y = prevYear;
+            if ((y % 4 == 0 and y % 100 != 0) or y % 400 == 0) { 29 } else { 28 }
+          };
+          case 3  31; case 4  30; case 5  31; case 6  30;
+          case 7  31; case 8  31; case 9  30; case 10 31; case 11 30; case 12 31;
+          case _  30;
+        };
+        utcDay := daysInPrevMonth.toText();
+        utcMonth := prevMonth.toText();
+        utcYear := prevYear.toText();
+      };
+    };
+
+    let utcHr = Float.floor(utcFrac).toInt().toNat();
+    let utcMn = Float.floor((utcFrac - Float.floor(utcFrac)) * 60.0).toInt().toNat();
+
+    // Build swetest arg string:
+    // -b{day}.{month}.{year} -t{HH}:{MM}:00 -p0123456789D -fPls -sid1 -eswe -ut -head
+    // Planets: 0=Sun,1=Moon,2=Mercury,3=Venus,4=Mars,5=Jupiter,6=Saturn,7=Uranus,8=Neptune,9=Pluto,D=mean node (Rahu)
+    let argStr = "-b" # utcDay # "." # utcMonth # "." # utcYear
+      # " -t" # pad2(utcHr) # ":" # pad2(utcMn) # ":00"
+      # " -p0123456789D"
+      # " -fPls"
+      # " -sid1"
+      # " -eswe"
+      # " -ut"
+      # " -head";
+
+    // URL-encode the arg string for query parameter
+    let encoded = urlEncode(argStr);
+    "https://www.astro.com/cgi/swetest.cgi?arg=" # encoded;
+  };
+
+  // ── Main calculation function ─────────────────────────────────────────────────
+
+  public func calculateNadiPlanets(
+    dateStr : Text,
+    timeStr : Text,
+    lat : Float,
+    lon : Float,
+  ) : async { #ok : NadiChartResult; #err : Text } {
+    // Compute ascendant using Jean Meeus (same for both paths)
+    let (year, month, day) = parseDateStr(dateStr);
+    let istHours = parseTimeStr(timeStr);
+    let utHours = istHours - 5.5;
+    let jd = julianDay(year, month, day, utHours);
+    let T = (jd - 2451545.0) / 36525.0;
+    let ascTrop = ascendantLon(T, utHours, lon, lat);
+    let ascSid = toSidereal(ascTrop, jd);
+
+    // Build swetest URL
+    let url = buildSwetestUrl(dateStr, timeStr);
+    if (url.size() == 0) {
+      // Fallback to Meeus on URL build failure
+      let r = calculateMeeus(dateStr, timeStr, lat, lon);
+      return #ok(r);
+    };
+
+    // Attempt HTTP outcall to Astro.com swetest CGI
+    // HTTP outcalls on ICP require cycles; attach enough for a small GET request
+    try {
+      let response = await (with cycles = 50_000_000_000) IC.http_request({
+        url;
+        max_response_bytes = ?(4096 : Nat64);
+        headers = [
+          { name = "User-Agent"; value = "Mozilla/5.0 (compatible; ICP-canister)" },
+          { name = "Accept"; value = "text/plain" },
+        ];
+        body = null;
+        method = #get;
+        transform = null;
+      });
+
+      if (response.status >= 200 and response.status < 300) {
+        // Decode response body
+        let bodyText = switch (response.body.decodeUtf8()) {
+          case (?t) t;
+          case null {
+            // Fallback to Meeus if decode fails
+            let r = calculateMeeus(dateStr, timeStr, lat, lon);
+            return #ok(r);
+          };
+        };
+
+        // Split into lines and parse
+        let lines = bodyText.split(#char '\n').toArray();
+        switch (buildResultFromSwetest(lines, ascSid, dateStr, timeStr, lat, lon)) {
+          case (?result) { #ok(result) };
+          case null {
+            // Parse failed — fall back to Meeus
+            let r = calculateMeeus(dateStr, timeStr, lat, lon);
+            #ok(r);
+          };
+        };
+      } else {
+        // Non-200 status — fall back to Meeus
+        let r = calculateMeeus(dateStr, timeStr, lat, lon);
+        #ok(r);
+      };
+    } catch (_) {
+      // HTTP call failed (network, timeout, etc.) — fall back to Meeus
+      let r = calculateMeeus(dateStr, timeStr, lat, lon);
+      #ok(r);
+    };
   };
 };

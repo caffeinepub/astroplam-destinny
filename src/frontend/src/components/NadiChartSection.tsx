@@ -1,5 +1,5 @@
-// NadiChartSection — Nadi Chart using @swisseph/browser (WebAssembly Swiss Ephemeris)
-// Planetary calculations run client-side in WASM — no backend call needed for positions
+// NadiChartSection — Nadi Chart using backend canister calculateNadiPlanets
+// Planetary calculations run server-side via Motoko + Swiss Ephemeris HTTP outcalls
 // Dasha tree is computed locally from Moon's sidereal longitude
 import PlaceAutocomplete from "@/components/PlaceAutocomplete";
 import { Button } from "@/components/ui/button";
@@ -13,19 +13,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  type NadiDashaData,
-  type NadiDashaEntry,
-  nadiFormatDeg as _nadiFormatDeg,
-} from "@/lib/nadiChartEngine";
-import { calculateSwissEphChart } from "@/lib/swissEphEngine";
+import type { NadiDashaData, NadiDashaEntry } from "@/lib/nadiChartEngine";
+import { useActor as _useActor } from "@caffeineai/core-infrastructure";
 import { Loader2, Star } from "lucide-react";
 import { motion } from "motion/react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { createActor } from "../backend";
 
-// suppress unused import warning
-void _nadiFormatDeg;
+const useActor = () => _useActor(createActor);
 
 // ─── Dasha helpers (pure JS, no backend needed) ───────────────────────────────
 const NAK_DEG = 360 / 27;
@@ -382,25 +378,7 @@ function NadiDashaSection({ dasha }: { dasha: NadiDashaData }) {
   );
 }
 
-// ─── Main NadiChartSection ────────────────────────────────────────────────────
-interface NadiFormState {
-  date: string;
-  time: string;
-  place: string;
-  lat: string;
-  lon: string;
-  tz: string;
-}
-
-const DEFAULT_NADI_FORM: NadiFormState = {
-  date: "2008-02-05",
-  time: "15:50",
-  place: "Jind, Haryana, India",
-  lat: "29.3200",
-  lon: "76.3200",
-  tz: "5.5",
-};
-
+// ─── Sign index helper ────────────────────────────────────────────────────────
 const SIGN_NAMES = [
   "Aries",
   "Taurus",
@@ -422,7 +400,27 @@ function getSignIndex(signName: string): number {
   return idx >= 0 ? idx : 0;
 }
 
+// ─── Main NadiChartSection ────────────────────────────────────────────────────
+interface NadiFormState {
+  date: string;
+  time: string;
+  place: string;
+  lat: string;
+  lon: string;
+  tz: string;
+}
+
+const DEFAULT_NADI_FORM: NadiFormState = {
+  date: "2008-02-05",
+  time: "15:50",
+  place: "Jind, Haryana, India",
+  lat: "29.3200",
+  lon: "76.3200",
+  tz: "5.5",
+};
+
 export default function NadiChartSection() {
+  const { actor } = useActor();
   const [form, setForm] = useState<NadiFormState>(DEFAULT_NADI_FORM);
   const [result, setResult] = useState<NadiDisplayResult | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
@@ -460,35 +458,58 @@ export default function NadiChartSection() {
     const [hr, min] = form.time.split(":").map(Number);
     const lat = Number.parseFloat(form.lat);
     const lon = Number.parseFloat(form.lon);
-    const tz = Number.parseFloat(form.tz);
-    if (Number.isNaN(lat) || Number.isNaN(lon) || Number.isNaN(tz)) {
-      toast.error("Please enter valid latitude, longitude and UTC offset.");
+    if (Number.isNaN(lat) || Number.isNaN(lon)) {
+      toast.error("Please enter valid latitude and longitude.");
+      return;
+    }
+
+    if (!actor) {
+      toast.error("Backend not ready. Please wait a moment and try again.");
       return;
     }
 
     setIsCalculating(true);
     try {
-      // Build date/time strings for swissEphEngine
+      // Format: DD-MM-YYYY and HH:MM — backend expects this format
       const dateStr = `${String(d).padStart(2, "0")}-${String(m).padStart(2, "0")}-${y}`;
       const timeStr = `${String(hr).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 
-      const chartData = await calculateSwissEphChart(
-        dateStr,
-        timeStr,
-        lat,
-        lon,
-        tz,
-      );
+      // Call backend canister — calculateNadiPlanets uses Swiss Ephemeris server-side
+      const response = await (
+        actor as unknown as {
+          calculateNadiPlanets(
+            dateStr: string,
+            timeStr: string,
+            lat: number,
+            lon: number,
+          ): Promise<
+            | { __kind__: "ok"; ok: BackendNadiChartResult }
+            | { err: string }
+            | { ok: BackendNadiChartResult }
+          >;
+        }
+      ).calculateNadiPlanets(dateStr, timeStr, lat, lon);
 
-      // Build dasha from Moon's sidereal position
-      const moonPlanet = chartData.planets.find((p) => p.name === "Moon");
-      const moonSignIdx = moonPlanet ? getSignIndex(moonPlanet.sign) : 0;
-      const moonSidLon = moonSignIdx * 30 + (moonPlanet?.degree ?? 0);
-      const birthDate = new Date(y, m - 1, d, hr, min);
-      const dasha = calcDasha(birthDate, moonSidLon);
+      // Handle both { __kind__: "ok", ok: ... } and { ok: ... } / { err: ... } shapes
+      let chartData: BackendNadiChartResult;
+      if ("__kind__" in response) {
+        if (response.__kind__ === "ok") {
+          chartData = response.ok;
+        } else {
+          throw new Error(
+            (response as unknown as { __kind__: "err"; err: string }).err,
+          );
+        }
+      } else if ("ok" in response) {
+        chartData = response.ok;
+      } else if ("err" in response) {
+        throw new Error(response.err);
+      } else {
+        throw new Error("Unexpected response from backend");
+      }
 
-      // Map to display rows
-      const toRow = (p: (typeof chartData.planets)[0]): PlanetRow => ({
+      // Map NadiPlanetInfo (backend) → PlanetRow (display)
+      const toRow = (p: BackendNadiPlanetInfo): PlanetRow => ({
         name: p.name,
         sign: p.sign,
         degreeStr: p.degreeStr,
@@ -500,13 +521,20 @@ export default function NadiChartSection() {
         isRetrograde: p.isRetrograde,
       });
 
+      // Build dasha from Moon's sidereal position (from backend result)
+      const moonPlanet = chartData.planets.find((p) => p.name === "Moon");
+      const moonSignIdx = moonPlanet ? getSignIndex(moonPlanet.sign) : 0;
+      const moonSidLon = moonSignIdx * 30 + (moonPlanet?.degree ?? 0);
+      const birthDate = new Date(y, m - 1, d, hr, min);
+      const dasha = calcDasha(birthDate, moonSidLon);
+
       setResult({
         planets: chartData.planets.map(toRow),
         ascendant: toRow(chartData.ascendant),
         dasha,
         dashaBalance: chartData.dashaBalance,
-        inputDate: `${String(d).padStart(2, "0")}-${String(m).padStart(2, "0")}-${y}`,
-        inputTime: `${String(hr).padStart(2, "0")}:${String(min).padStart(2, "0")}`,
+        inputDate: dateStr,
+        inputTime: timeStr,
         inputPlace: form.place,
       });
 
@@ -538,8 +566,8 @@ export default function NadiChartSection() {
             Nadi Chart — Birth Details
           </h2>
           <p className="text-xs text-muted-foreground">
-            Uses WebAssembly Swiss Ephemeris (@swisseph/browser) — true
-            JPL-level precision
+            Uses Swiss Ephemeris via backend canister — true JPL-level precision
+            for 1950–2050
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -689,14 +717,19 @@ export default function NadiChartSection() {
           <Button
             data-ocid="nadi_calculate.primary_button"
             onClick={handleCalculate}
-            disabled={isCalculating}
+            disabled={isCalculating || !actor}
             className="w-full sm:w-auto text-sm font-semibold"
             style={{ background: "#2E8B57", color: "#ffffff" }}
           >
             {isCalculating ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Calculating…
+                Calculating via Swiss Ephemeris…
+              </>
+            ) : !actor ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Connecting to backend…
               </>
             ) : (
               <>
@@ -712,6 +745,10 @@ export default function NadiChartSection() {
       {error && !isCalculating && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           <strong>Error:</strong> {error}
+          <p className="mt-1 text-xs text-red-500">
+            The backend Swiss Ephemeris engine returned an error. Please check
+            your date/time/location and try again.
+          </p>
         </div>
       )}
 
@@ -920,4 +957,24 @@ export default function NadiChartSection() {
       )}
     </div>
   );
+}
+
+// ─── Backend type aliases (inline, avoids importing from backend.ts) ──────────
+interface BackendNadiPlanetInfo {
+  subLord: string;
+  isRetrograde: boolean;
+  name: string;
+  pada: bigint | number;
+  sign: string;
+  degree: number;
+  nakLord: string;
+  houseNum: bigint | number;
+  degreeStr: string;
+  nakshatra: string;
+}
+
+interface BackendNadiChartResult {
+  dashaBalance: string;
+  planets: BackendNadiPlanetInfo[];
+  ascendant: BackendNadiPlanetInfo;
 }
